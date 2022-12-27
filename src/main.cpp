@@ -8,13 +8,13 @@ constexpr bool DEBUG    = true;                         // True: general debug p
 constexpr bool DEBUG_UI = false;                        // True: print unused UI events
 
 namespace Mouse
-{
+{ // Everyone wants to know about the mouse
     SDL_MouseMotionEvent motion{};                      // Info from motion event
     Sint32 x{};                                         // calculated mouse x
     Sint32 y{};                                         // calculated mouse y
 }
 namespace UI
-{
+{ // If UI event code does too much, move code out and make it a flag
     namespace Flags
     {
         bool window_size_changed{};
@@ -22,7 +22,7 @@ namespace UI
     }
 }
 namespace UnusedUI
-{
+{ // With DEBUG_IU == true, debug print info about unused UI events
     void msg(int line_num, const char* event_type_str, Uint32 event_timestamp_ms)
     { // Message content for ignored UI events
         printf("line %d :\tUnused e.type:\t%s\tat %dms\n",
@@ -31,7 +31,7 @@ namespace UnusedUI
 #define UNUSED_UI(X) case X: if(DEBUG_UI) UnusedUI::msg(__LINE__,#X,e.common.timestamp); break
 }
 namespace GameArt
-{ // Render here so stuff looks good independent of OS window
+{ // Render on GameArt::tex so stuff looks good independent of OS window
     namespace AspectRatio
     {
         constexpr int w = 16;
@@ -52,7 +52,7 @@ namespace GameArt
     SDL_Texture *tex;
 }
 namespace GameWin
-{ // Size of actual game in the OS window
+{ // Size of actual game in the OS window -- pixel_size > 1 makes it chunky
     int w = GameArt::w * GameArt::pixel_size;
     int h = GameArt::h * GameArt::pixel_size;
 }
@@ -71,7 +71,7 @@ namespace GtoW
     int scale = GameArt::pixel_size;
 }
 struct WindowInfo
-{
+{ // OS Window size and flags
     int x,y,w,h;
     Uint32 flags;
 };
@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
         // UI
         /////
         SDL_Event e; while(SDL_PollEvent(&e))
-        {
+        { // Process all events, set flags for tricky ones
             switch(e.type)
             { // See SDL_EventType
                 case SDL_QUIT: quit=true; break;
@@ -142,11 +142,11 @@ int main(int argc, char* argv[])
                 // e.key
                 case SDL_KEYDOWN:
                     switch(e.key.keysym.sym)
-                    {
+                    { // Respond to keyboard input
                         case SDLK_q: quit=true; break;
                         default:
                             if(DEBUG_UI)
-                            {
+                            { // Print unused keydown events
                                 char buf[64]; sprintf(buf,"SDL_KEYDOWN: e.key.keysym.sym '%c'",e.key.keysym.sym);
                                 UnusedUI::msg(__LINE__,buf,e.common.timestamp);
                             }
@@ -162,66 +162,70 @@ int main(int argc, char* argv[])
 
                 // e.window
                 case SDL_WINDOWEVENT:
-                    if(DEBUG_UI)
-                    { // Unused window events
-                        int w,h;
-                        switch(e.window.event)
-                        {
-                            case SDL_WINDOWEVENT_SHOWN:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_SHOWN\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                break;
-                            case SDL_WINDOWEVENT_MOVED:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_MOVED\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                break;
-                            case SDL_WINDOWEVENT_EXPOSED:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_EXPOSED\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                SDL_GetWindowSize(win, &w, &h);
-                                printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
-                                 SDL_GetRendererOutputSize(ren, &w, &h);
-                                printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
-                                break;
-                            case SDL_WINDOWEVENT_RESIZED:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_RESIZED\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                SDL_GetWindowSize(win, &w, &h);
-                                printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
-                                 SDL_GetRendererOutputSize(ren, &w, &h);
-                                printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
-                                break;
-                            case SDL_WINDOWEVENT_ENTER:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_ENTER\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                break;
-                            case SDL_WINDOWEVENT_LEAVE:
-                                printf("%d : e.window.event \"SDL_WINDOWEVENT_LEAVE\" at %dms\n",
-                                        __LINE__, e.window.timestamp);
-                                break;
-                            default:
-                                    printf("%d : e.type \"SDL_WINDOWEVENT\" SDL_WindowEventID %d\n",__LINE__,e.window.event);
-                                break;
-                        }
-                    }
                     switch(e.window.event)
-                    { // SDL_WINDOWEVENT_SIZE_CHANGED occurs once on a resize
+                    { // Respond to window resize
                         case SDL_WINDOWEVENT_SIZE_CHANGED:
+                            // SDL_WINDOWEVENT_SIZE_CHANGED occurs once on a resize
+                            // SDL_WINDOWEVENT_RESIZED occurs twice on a resize
+                            // So I use SDL_WINDOWEVENT_SIZE_CHANGED.
+                            UI::Flags::window_size_changed = true;
                             if(DEBUG)
                             { // Print event name, timestamp, window size, game art size
                                 printf("%d : e.window.event \"SDL_WINDOWEVENT_SIZE_CHANGED\" at %dms\n", __LINE__, e.window.timestamp);
                                 printf("BEFORE: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h);
                             }
-                            UI::Flags::window_size_changed = true;
+                            break;
+                        default:
+                            if(DEBUG_UI)
+                            { // Print unused window events
+                                int w,h;
+                                switch(e.window.event)
+                                {
+                                    case SDL_WINDOWEVENT_SHOWN:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_SHOWN\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        break;
+                                    case SDL_WINDOWEVENT_MOVED:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_MOVED\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        break;
+                                    case SDL_WINDOWEVENT_EXPOSED:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_EXPOSED\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        SDL_GetWindowSize(win, &w, &h);
+                                        printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
+                                         SDL_GetRendererOutputSize(ren, &w, &h);
+                                        printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
+                                        break;
+                                    case SDL_WINDOWEVENT_RESIZED:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_RESIZED\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        SDL_GetWindowSize(win, &w, &h);
+                                        printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
+                                         SDL_GetRendererOutputSize(ren, &w, &h);
+                                        printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
+                                        break;
+                                    case SDL_WINDOWEVENT_ENTER:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_ENTER\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        break;
+                                    case SDL_WINDOWEVENT_LEAVE:
+                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_LEAVE\" at %dms\n",
+                                                __LINE__, e.window.timestamp);
+                                        break;
+                                    default:
+                                            printf("%d : e.type \"SDL_WINDOWEVENT\" SDL_WindowEventID %d\n",__LINE__,e.window.event);
+                                        break;
+                                }
+                            }
                             break;
                     }
-                    break;
 
-                { // Print e.type and e.timestamp for events seen but unused.
+                { // Print e.type and e.timestamp for events I know about but am not using yet.
 
-                    //////////////////
-                    // UNHANDLED STUFF
-                    //////////////////
+                    ////////////////
+                    // UNUSED EVENTS
+                    ////////////////
 
                     // e.adevice
                     UNUSED_UI(SDL_AUDIODEVICEADDED);
@@ -278,7 +282,7 @@ int main(int argc, char* argv[])
 
                 default:
                     if (DEBUG_UI)
-                    {
+                    { // Catch any events I haven't made cases for
                         printf("line %d : TODO: Look up 0x%4X in enum SDL_EventType "
                                "and wrap in UNUSED_UI() macro "
                                "in section \"UNHANDLED STUFF\"\n", __LINE__, e.type);
