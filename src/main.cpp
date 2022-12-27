@@ -1,10 +1,9 @@
-#include <cstdio>
 #include "SDL.h"
 
 // [ ] add audio
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
-constexpr bool DEBUG_UI = false;                        // True: print unused UI events
+constexpr bool DEBUG_UI = true;                         // True: print unused UI events
 
 namespace Mouse
 { // Everyone wants to know about the mouse
@@ -23,13 +22,25 @@ namespace UI
     bool is_fullscreen{};
 }
 namespace UnusedUI
-{ // With DEBUG_IU == true, debug print info about unused UI events
+{ // Debug print info about unused UI events (DEBUG_UI==true)
     void msg(int line_num, const char* event_type_str, Uint32 event_timestamp_ms)
-    { // Message content for ignored UI events
-        printf("line %d :\tUnused e.type:\t%s\tat %dms\n",
+    { // Message content for unused UI events
+        /* *************Example inputs***************
+         * line_num : __LINE__
+         * event_type_str : "SDL_AUDIODEVICEADDED"
+         * event_timestamp_ms : e.common.timestamp
+         * *******************************/
+        printf("line %d :\tUnused %s\tat %dms\n",
                 line_num, event_type_str, event_timestamp_ms);
     }
-#define UNUSED_UI(X) case X: if(DEBUG_UI) UnusedUI::msg(__LINE__,#X,e.common.timestamp); break
+}
+namespace UnknownUI
+{
+    void msg(int line_num, const char* event_type_str, const char* event_id_str, Uint32 event_id)
+    { // Message content for unknown UI events
+        printf("line %d :\tUnknown %s\t%s: %d\n",
+                line_num, event_type_str, event_id_str, event_id);
+    }
 }
 namespace GameArt
 { // Render on GameArt::tex so stuff looks good independent of OS window
@@ -148,11 +159,23 @@ int main(int argc, char* argv[])
                         case SDLK_F11:
                              UI::Flags::fullscreen_toggled = true;
                              break;
-
+                        ////////////////////////
+                        // UNUSED KEYDOWN EVENTS
+                        ////////////////////////
+                        case SDLK_RETURN:
+                            if(DEBUG_UI) UnusedUI::msg(__LINE__,
+                                "e.key SDL_KEYDOWN: e.key.keysym.sym SDLK_RETURN",
+                                e.common.timestamp
+                                );
+                            break;
                         default:
                             if(DEBUG_UI)
                             { // Print unused keydown events
-                                char buf[64]; sprintf(buf,"SDL_KEYDOWN: e.key.keysym.sym '%c'",e.key.keysym.sym);
+                                char buf[64];
+                                sprintf(buf,
+                                    "e.key \"SDL_KEYDOWN\": e.key.keysym.sym '%c'",
+                                    e.key.keysym.sym
+                                    );
                                 UnusedUI::msg(__LINE__,buf,e.common.timestamp);
                             }
                             break;
@@ -183,114 +206,148 @@ int main(int argc, char* argv[])
                         default:
                             if(DEBUG_UI)
                             { // Print unused window events
+                                ///////////////////////
+                                // UNUSED WINDOW EVENTS
+                                ///////////////////////
                                 int w,h;
                                 switch(e.window.event)
                                 {
                                     case SDL_WINDOWEVENT_SHOWN:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_SHOWN\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_SHOWN\"",
+                                            e.window.timestamp);
                                         break;
                                     case SDL_WINDOWEVENT_MOVED:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_MOVED\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_MOVED\"",
+                                            e.window.timestamp);
                                         break;
                                     case SDL_WINDOWEVENT_EXPOSED:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_EXPOSED\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_EXPOSED\"",
+                                            e.window.timestamp);
                                         SDL_GetWindowSize(win, &w, &h);
                                         printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
                                          SDL_GetRendererOutputSize(ren, &w, &h);
                                         printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
                                         break;
                                     case SDL_WINDOWEVENT_RESIZED:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_RESIZED\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_RESIZED\"",
+                                            e.window.timestamp);
                                         SDL_GetWindowSize(win, &w, &h);
                                         printf("\tSDL_GetWindowSize:         W x H: %d x %d\n", w, h);
                                          SDL_GetRendererOutputSize(ren, &w, &h);
                                         printf("\tSDL_GetRendererOutputSize: W x H: %d x %d\n", w, h);
                                         break;
                                     case SDL_WINDOWEVENT_ENTER:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_ENTER\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_ENTER\"",
+                                            e.window.timestamp);
                                         break;
                                     case SDL_WINDOWEVENT_LEAVE:
-                                        printf("%d : e.window.event \"SDL_WINDOWEVENT_LEAVE\" at %dms\n",
-                                                __LINE__, e.window.timestamp);
+                                        UnusedUI::msg(__LINE__,
+                                            "e.window.event \"SDL_WINDOWEVENT_LEAVE\"",
+                                            e.window.timestamp);
                                         break;
                                     default:
-                                            printf("%d : e.type \"SDL_WINDOWEVENT\" SDL_WindowEventID %d\n",__LINE__,e.window.event);
+                                        UnknownUI::msg(__LINE__,
+                                            "e.type \"SDL_WINDOWEVENT\"",
+                                            "SDL_WindowEventID",e.window.event);
                                         break;
                                 }
                             }
                             break;
                     }
+                    break;
 
-                { // Print e.type and e.timestamp for events I know about but am not using yet.
+                ////////////////
+                // UNUSED EVENTS
+                ////////////////
 
-                    ////////////////
-                    // UNUSED EVENTS
-                    ////////////////
+                // e.key
+                case SDL_KEYUP:
+                    switch(e.key.keysym.sym)
+                    {
+                        case SDLK_RETURN:
+                            if(DEBUG_UI) UnusedUI::msg(__LINE__,
+                                "e.key SDL_KEYUP: e.key.keysym.sym SDLK_RETURN",
+                                e.common.timestamp
+                                );
+                            break;
+                        default:
+                            if(DEBUG_UI)
+                            {
+                                char buf[64];
+                                sprintf(buf,"e.key \"SDL_KEYUP\" e.key.keysym.sym: '%c'",
+                                        e.key.keysym.sym
+                                        );
+                                UnusedUI::msg(__LINE__,buf,e.common.timestamp);
+                            }
+                            break;
+                    }
+                    break;
 
-                    // e.adevice
-                    UNUSED_UI(SDL_AUDIODEVICEADDED);
+                // e.adevice
+                case SDL_AUDIODEVICEADDED:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_AUDIODEVICEADDED\"", e.common.timestamp);
+                    break;
 
-                    // e.?
-                    UNUSED_UI(SDL_RENDER_TARGETS_RESET);
+                // e.?
+                case SDL_RENDER_TARGETS_RESET:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_RENDER_TARGETS_RESET\"", e.common.timestamp);
+                    break;
 
-                    // e.key
-                    case SDL_KEYUP:
-                        if(DEBUG_UI)
-                        {
-                            char buf[64]; sprintf(buf,"SDL_KEYUP e.key.keysym.sym: '%c'",e.key.keysym.sym);
-                            UnusedUI::msg(__LINE__,buf,e.common.timestamp);
-                        }
-                        break;
+                // e.edit
+                case SDL_TEXTEDITING:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_TEXTEDITING\"", e.common.timestamp);
+                    break;
 
-                    // e.edit
-                    UNUSED_UI(SDL_TEXTEDITING);
+                // e.text
+                /* *************TextInput***************
+                 * SDL_StartTextInput()
+                 * SDL_StopTextInput()
+                 * These are really enable/disable, not start/stop.
+                 *
+                 * See https://wiki.libsdl.org/SDL2/Tutorials-TextInput
+                 *
+                 * Starts/Stops SDL looking at all keyboard input as potential for an
+                 * alternate input method, like entering chinese characters.
+                 *
+                 * It seems by default that text input is enabled.
+                 * So any direct text (not IME), generates this event with the
+                 * single-character. Maybe that's useful? Or maybe it's wasting cycles
+                 * and I should disable this during setup?
+                 *
+                 * I wanted to use this for a Vim style keybinding, but I can't figure
+                 * out how to collect multiple characters with this "text input" API.
+                 * *******************************/
+                case SDL_TEXTINPUT:
+                    if(DEBUG_UI)
+                    {
+                        char buf[64]; sprintf(buf,"e.text \"SDL_TEXTINPUT\" e.text: \"%s\"",e.text.text);
+                        UnusedUI::msg(__LINE__,buf,e.common.timestamp);
+                    }
+                    break;
 
-                    // e.text
-                    /* *************TextInput***************
-                     * SDL_StartTextInput()
-                     * SDL_StopTextInput()
-                     * These are really enable/disable, not start/stop.
-                     *
-                     * See https://wiki.libsdl.org/SDL2/Tutorials-TextInput
-                     *
-                     * Starts/Stops SDL looking at all keyboard input as potential for an
-                     * alternate input method, like entering chinese characters.
-                     *
-                     * It seems by default that text input is enabled.
-                     * So any direct text (not IME), generates this event with the
-                     * single-character. Maybe that's useful? Or maybe it's wasting cycles
-                     * and I should disable this during setup?
-                     *
-                     * I wanted to use this for a Vim style keybinding, but I can't figure
-                     * out how to collect multiple characters with this "text input" API.
-                     * *******************************/
-                    case SDL_TEXTINPUT:
-                        if(DEBUG_UI)
-                        {
-                            char buf[64]; sprintf(buf,"SDL_TEXTINPUT e.text: \"%s\"",e.text.text);
-                            UnusedUI::msg(__LINE__,buf,e.common.timestamp);
-                        }
-                        break;
+                // e.button
+                case SDL_MOUSEBUTTONDOWN:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_MOUSEBUTTONDOWN\"", e.common.timestamp);
+                    break;
+                case SDL_MOUSEBUTTONUP:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_MOUSEBUTTONUP\"", e.common.timestamp);
+                    break;
 
-                    // e.button
-                    UNUSED_UI(SDL_MOUSEBUTTONDOWN);
-                    UNUSED_UI(SDL_MOUSEBUTTONUP);
-
-                    // e.wheel
-                    UNUSED_UI(SDL_MOUSEWHEEL);
-                }
+                // e.wheel
+                case SDL_MOUSEWHEEL:
+                    if(DEBUG_UI) UnusedUI::msg(__LINE__, "e.type \"SDL_MOUSEWHEEL\"", e.common.timestamp);
+                    break;
 
                 default:
                     if (DEBUG_UI)
                     { // Catch any events I haven't made cases for
                         printf("line %d : TODO: Look up 0x%4X in enum SDL_EventType "
-                               "and wrap in UNUSED_UI() macro "
-                               "in section \"UNHANDLED STUFF\"\n", __LINE__, e.type);
+                               "and put it in section \"UNUSED EVENTS\"\n", __LINE__, e.type);
                     }
                     break;
             }
