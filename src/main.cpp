@@ -1,6 +1,8 @@
 #include "SDL.h"
 
-// [ ] add audio
+// [x] add audio from file
+// [ ] loop from file?
+// [ ] add audio from callback (replaces add from file)
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
@@ -68,6 +70,12 @@ namespace GameWin
     int w = GameArt::w * GameArt::pixel_size;
     int h = GameArt::h * GameArt::pixel_size;
 }
+namespace GameAudio
+{
+    SDL_AudioDeviceID dev;
+    Uint8* buf = NULL;
+    Uint32 len{};
+}
 namespace GtoW
 { // Coordinate transform from GameArt coordinates to Window coordinates
     /* *************DOC***************
@@ -93,6 +101,8 @@ SDL_Renderer* ren;
 
 void shutdown(void)
 {
+    SDL_FreeWAV(GameAudio::buf);
+    SDL_CloseAudioDevice(GameAudio::dev);
     SDL_DestroyTexture(GameArt::tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
@@ -104,7 +114,7 @@ int main(int argc, char* argv[])
     WindowInfo wI{};
     { // Window setup
         { // Window x,y,w,h defaults (use these if Vim passes no args)
-            wI.x = 10;
+            wI.x = 1000; // wI.x = 10;
             wI.y = 60;
             SDL_assert(GameArt::pixel_size >= 1);       // 1 : high-def, >1 : chunky
             wI.w = GameWin::w;
@@ -131,12 +141,76 @@ int main(int argc, char* argv[])
         SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
         win = SDL_CreateWindow(argv[0], wI.x, wI.y, wI.w, wI.h, wI.flags);
         ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_PRESENTVSYNC|SDL_RENDERER_ACCELERATED);
+        ///////////
+        // GAME ART
+        ///////////
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         GameArt::tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, GameArt::w, GameArt::h);
         if(SDL_SetTextureBlendMode(GameArt::tex, SDL_BLENDMODE_BLEND) == -1)
         {
-            printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError()); shutdown(); return EXIT_FAILURE;
+            printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
+            shutdown(); return EXIT_FAILURE;
         }
+        /////////////
+        // GAME AUDIO
+        /////////////
+
+        SDL_AudioSpec wav_spec;
+        { // 1. Load the WAV file
+            const char* wav = "data/windy-lily.wav";
+            if (SDL_LoadWAV(wav, &wav_spec, &GameAudio::buf, &GameAudio::len) == NULL)
+            {
+                printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
+                shutdown(); return EXIT_FAILURE;
+            }
+        }
+        SDL_AudioSpec dev_spec;
+        { // 2. Open an audio device to match WAV specs
+            GameAudio::dev = SDL_OpenAudioDevice(NULL, 0, &wav_spec, &dev_spec, 0);
+        }
+        if(DEBUG)
+        { // Print the Audio device audio spec
+
+            /* *************DOC***************
+             *  --- Audio device audio spec ---
+             *
+             *  - spec.freq: 44100 samples per second
+             *  - spec.format: 32784 SDL_AudioFormat (flags)
+             *          - bit size: 16
+             *          - is float: no
+             *          - is int: yes
+             *          - is bigendian: no
+             *          - is littleendian: yes
+             *          - is signed: yes
+             *          - is unsigned: no
+             *  - spec.channels: 2 (stereo)
+             *  - spec.silence: 0
+             *  - spec.samples: 4096
+             *  - spec.padding: 0
+             *  - spec.size: 16384 bytes
+             *          - Compare with GameAudio::len : 2201596 bytes
+             * *******************************/
+
+            SDL_AudioSpec spec = dev_spec;
+            puts("\n--- Audio device audio spec ---\n");
+            printf("- spec.freq: %d samples per second\n", spec.freq);
+            printf("- spec.format: %d SDL_AudioFormat (flags)\n", spec.format);
+            printf("\t- bit size: %d\n", SDL_AUDIO_BITSIZE(spec.format));
+            printf("\t- is float: %s\n", SDL_AUDIO_ISFLOAT(spec.format)?"yes":"no");
+            printf("\t- is int: %s\n", SDL_AUDIO_ISINT(spec.format)?"yes":"no");
+            printf("\t- is bigendian: %s\n", SDL_AUDIO_ISBIGENDIAN(spec.format)?"yes":"no");
+            printf("\t- is littleendian: %s\n", SDL_AUDIO_ISLITTLEENDIAN(spec.format)?"yes":"no");
+            printf("\t- is signed: %s\n", SDL_AUDIO_ISSIGNED(spec.format)?"yes":"no");
+            printf("\t- is unsigned: %s\n", SDL_AUDIO_ISUNSIGNED(spec.format)?"yes":"no");
+            printf("- spec.channels: %d (%s)\n", spec.channels, (spec.channels==1)?"mono":((spec.channels==2)?"stereo":"not mono or stereo!"));
+            printf("- spec.silence: %d\n", spec.silence);
+            printf("- spec.samples: %d\n", spec.samples);
+            printf("- spec.padding: %d\n", spec.padding);
+            printf("- spec.size: %d bytes\n", spec.size);
+            printf("\t- Compare with GameAudio::len : %d bytes\n", GameAudio::len);
+        }
+        SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+        SDL_PauseAudioDevice(GameAudio::dev, 0);
     }
 
     bool quit = false;
