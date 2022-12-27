@@ -1,7 +1,6 @@
 #include <cstdio>
 #include "SDL.h"
 
-// [ ] resize and recenter with window size
 // [ ] add audio
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
@@ -19,7 +18,9 @@ namespace UI
     {
         bool window_size_changed{};
         bool mouse_moved{};
+        bool fullscreen_toggled{};
     }
+    bool is_fullscreen{};
 }
 namespace UnusedUI
 { // With DEBUG_IU == true, debug print info about unused UI events
@@ -144,6 +145,10 @@ int main(int argc, char* argv[])
                     switch(e.key.keysym.sym)
                     { // Respond to keyboard input
                         case SDLK_q: quit=true; break;
+                        case SDLK_F11:
+                             UI::Flags::fullscreen_toggled = true;
+                             break;
+
                         default:
                             if(DEBUG_UI)
                             { // Print unused keydown events
@@ -299,6 +304,22 @@ int main(int argc, char* argv[])
             // TODO: need to use floats for this? Doesn't seem like it.
             Mouse::x = (Mouse::motion.x - GtoW::Offset::x)/GtoW::scale;
             Mouse::y = (Mouse::motion.y - GtoW::Offset::y)/GtoW::scale;
+        }
+        if(UI::Flags::fullscreen_toggled)
+        {
+            UI::Flags::fullscreen_toggled = false;
+            UI::is_fullscreen = !UI::is_fullscreen;
+            if(UI::is_fullscreen)
+            { // Go fullscreen
+                // Don't bother dealing with videomode mode change
+                // SDL_WINDOW_FULLSCREEN_DESKTOP is way easier and faster than
+                // SDL_WINDOW_FULLSCREEN
+                SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            }
+            else
+            { // Go back to windowed
+                SDL_SetWindowFullscreen(win, 0);
+            }
         }
         if(UI::Flags::window_size_changed)
         { // Update stuff that depends on window size
