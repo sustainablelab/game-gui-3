@@ -1,4 +1,5 @@
 #include "SDL.h"
+#include "mg_colors.h"
 
 // [x] add audio from file
 // [ ] loop from file?
@@ -212,6 +213,8 @@ int main(int argc, char* argv[])
         SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
         SDL_PauseAudioDevice(GameAudio::dev, 0);
     }
+
+    srand(0);
 
     bool quit = false;
     while(!quit)
@@ -495,21 +498,34 @@ int main(int argc, char* argv[])
         SDL_SetRenderTarget(ren, GameArt::tex);
 
         { // Game art background color
-            SDL_Color c = {20,20,20,255};
+            SDL_Color c = Colors::darkgravel;
             SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
             SDL_RenderClear(ren);
         }
         { // Placeholder game art
-            SDL_Color c = {255,255,20,128};
-            SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
-            SDL_RenderDrawLine(ren, 0,0,GameArt::w,GameArt::h);
-            SDL_RenderDrawLine(ren, GameArt::w,0,0,GameArt::h);
-            SDL_RenderDrawLine(ren, GameArt::w/2,GameArt::h/2,Mouse::x,Mouse::y);
+            { // X
+                uint8_t rand_r = (uint8_t)(std::rand()%256);
+                uint8_t rand_b = (uint8_t)(std::rand()%256);
+                uint8_t rand_g = (uint8_t)(std::rand()%256);
+                SDL_Color c = {rand_r,rand_g,rand_b,128};
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+
+                SDL_RenderDrawLine(ren, 0,0,GameArt::w,GameArt::h);
+                SDL_RenderDrawLine(ren, GameArt::w,0,0,GameArt::h);
+            }
+            { // Mouse location
+                SDL_Color c = Colors::lime;
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 128);
+                SDL_RenderDrawLine(ren, GameArt::w/2,GameArt::h/2,Mouse::x,Mouse::y);
+            }
         }
 
         SDL_SetRenderTarget(ren, NULL);
-        SDL_SetRenderDrawColor(ren, 0,0,0,0);
-        SDL_RenderClear(ren);
+        { // Set background color of window to match my Vim background color
+            SDL_Color c = Colors::blackestgravel;
+            SDL_SetRenderDrawColor(ren, c.r,c.g,c.b,c.a);
+            SDL_RenderClear(ren);
+        }
         { // Stretch game art to window to get chunky pixels
             SDL_Rect src = SDL_Rect{0,0,GameArt::w,GameArt::h};
             SDL_Rect dst;                               // Destination window
