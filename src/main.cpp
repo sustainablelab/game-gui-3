@@ -15,7 +15,7 @@ namespace UI
 { // If UI event code does too much, move code out and make it a flag
     namespace Flags
     {
-        bool window_size_changed{};
+        bool window_size_changed{true};
         bool mouse_moved{};
         bool fullscreen_toggled{};
     }
@@ -56,8 +56,8 @@ namespace GameArt
     // ┌───┐
     // │   │
     // └───┘
-    constexpr int scale = 10;                           // scale : game is scale * 16:9 
-    constexpr int pixel_size = 2;                       // [1:big] -- bigger is chunkier
+    constexpr int scale = 20;                           // scale : game is scale * 16:9 
+    constexpr int pixel_size = 4;                       // [1:big] -- bigger is chunkier
     constexpr int w = AspectRatio::w * scale;
     constexpr int h = AspectRatio::h * scale;
 
@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
     { // Window setup
         { // Window x,y,w,h defaults (use these if Vim passes no args)
             wI.x = 10;
-            wI.y = 10;
+            wI.y = 60;
             SDL_assert(GameArt::pixel_size >= 1);       // 1 : high-def, >1 : chunky
             wI.w = GameWin::w;
             wI.h = GameWin::h;
@@ -200,7 +200,7 @@ int main(int argc, char* argv[])
                             if(DEBUG)
                             { // Print event name, timestamp, window size, game art size
                                 printf("%d : e.window.event \"SDL_WINDOWEVENT_SIZE_CHANGED\" at %dms\n", __LINE__, e.window.timestamp);
-                                printf("BEFORE: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h);
+                                printf("BEFORE: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\tGtoW::scale: %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h, GtoW::scale);
                             }
                             break;
                         default:
@@ -391,7 +391,7 @@ int main(int argc, char* argv[])
                 else
                 {
                     int ratio_w = wI.w/GameArt::w;
-                    int ratio_h = wI.w/GameArt::h;
+                    int ratio_h = wI.h/GameArt::h;
                     // Use the smaller of the two ratios as the scaling factor
                     GtoW::scale = (ratio_w > ratio_h) ? ratio_h : ratio_w;
                 }
@@ -408,7 +408,7 @@ int main(int argc, char* argv[])
                 if(wI.h>GameWin::h) GtoW::Offset::y = (wI.h-GameWin::h)/2;
                 else GtoW::Offset::y = 0;
             }
-            if(DEBUG) printf("AFTER: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h);
+            if(DEBUG) printf("AFTER: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\tGtoW::scale: %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h, GtoW::scale);
         }
 
         /////////
