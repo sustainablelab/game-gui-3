@@ -1,12 +1,12 @@
 #include "SDL.h"
 #include "mg_colors.h"
 
-// [x] add audio from file
-// [ ] loop from file?
 // [ ] add audio from callback (replaces add from file)
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
+constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
+constexpr bool AUDIO_CALLBACK = false;                  // False : queue audio instead of callback
 
 namespace Mouse
 { // Everyone wants to know about the mouse
@@ -20,6 +20,7 @@ namespace UI
     {
         bool window_size_changed{true};
         bool mouse_moved{};
+        bool loop_audio{true};
         bool fullscreen_toggled{};
     }
     bool is_fullscreen{};
@@ -73,7 +74,8 @@ namespace GameWin
 }
 namespace GameAudio
 {
-    SDL_AudioDeviceID dev;
+    SDL_AudioDeviceID dev;                              // Audio playback device handle
+    Uint32 dev_buf_size{};                             // Audio buffer size in bytes
     Uint8* buf = NULL;
     Uint32 len{};
 }
@@ -158,7 +160,9 @@ int main(int argc, char* argv[])
 
         SDL_AudioSpec wav_spec;
         { // 1. Load the WAV file
-            const char* wav = "data/windy-lily.wav";
+            /* const char* wav = "data/windy-lily.wav"; */
+            /* const char* wav = "data/day01.wav"; */
+            const char* wav = "data/Dry-Kick.wav";
             if (SDL_LoadWAV(wav, &wav_spec, &GameAudio::buf, &GameAudio::len) == NULL)
             {
                 printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
@@ -168,11 +172,12 @@ int main(int argc, char* argv[])
         SDL_AudioSpec dev_spec;
         { // 2. Open an audio device to match WAV specs
             GameAudio::dev = SDL_OpenAudioDevice(NULL, 0, &wav_spec, &dev_spec, 0);
+            GameAudio::dev_buf_size = dev_spec.size;
         }
         if(DEBUG)
         { // Print the Audio device audio spec
 
-            /* *************DOC***************
+            /* *************SDL_AudioSpec***************
              *  --- Audio device audio spec ---
              *
              *  - spec.freq: 44100 samples per second
@@ -190,6 +195,15 @@ int main(int argc, char* argv[])
              *  - spec.padding: 0
              *  - spec.size: 16384 bytes
              *          - Compare with GameAudio::len : 2201596 bytes
+             *
+             * data/windy-lily.wav:
+             *      GameAudio::len : 2201596 bytes
+             *      Seconds of audio:
+             2201596 / (2*44100*2.0) = 12.480703
+             * data/Dry-Kick.wav:
+             *      GameAudio::len : 28048 bytes
+             *      Seconds of audio:
+             28048 / (2*44100*2.0) = 0.159002
              * *******************************/
 
             SDL_AudioSpec spec = dev_spec;
@@ -210,7 +224,15 @@ int main(int argc, char* argv[])
             printf("- spec.size: %d bytes\n", spec.size);
             printf("\t- Compare with GameAudio::len : %d bytes\n", GameAudio::len);
         }
-        SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+        if(!AUDIO_CALLBACK)
+        {
+            Uint32 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
+            while(queued < GameAudio::dev_buf_size)
+            { // Queue multiple times if audio buffer is smaller than device buffer
+                SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+                queued = SDL_GetQueuedAudioSize(GameAudio::dev);
+            }
+        }
         SDL_PauseAudioDevice(GameAudio::dev, 0);
     }
 
@@ -242,6 +264,12 @@ int main(int argc, char* argv[])
                         case SDLK_RETURN:
                             if(DEBUG_UI) UnusedUI::msg(__LINE__,
                                 "e.key SDL_KEYDOWN: e.key.keysym.sym SDLK_RETURN",
+                                e.common.timestamp
+                                );
+                            break;
+                        case SDLK_ESCAPE:
+                            if(DEBUG_UI) UnusedUI::msg(__LINE__,
+                                "e.key SDL_KEYDOWN: e.key.keysym.sym SDLK_ESCAPE",
                                 e.common.timestamp
                                 );
                             break;
@@ -349,6 +377,12 @@ int main(int argc, char* argv[])
                         case SDLK_RETURN:
                             if(DEBUG_UI) UnusedUI::msg(__LINE__,
                                 "e.key SDL_KEYUP: e.key.keysym.sym SDLK_RETURN",
+                                e.common.timestamp
+                                );
+                            break;
+                        case SDLK_ESCAPE:
+                            if(DEBUG_UI) UnusedUI::msg(__LINE__,
+                                "e.key SDL_KEYUP: e.key.keysym.sym SDLK_ESCAPE",
                                 e.common.timestamp
                                 );
                             break;
@@ -491,6 +525,51 @@ int main(int argc, char* argv[])
         /////////
         // RENDER
         /////////
+
+        /////////////
+        // GAME SOUND
+        /////////////
+
+        if(!AUDIO_CALLBACK)
+        { // Check if it's time to queue more audio
+            // Copied from:
+            // libsdl-org/SDL/test/loopwavequeue.c
+            if(UI::Flags::loop_audio)
+            {
+                const Uint32 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
+                /* *************DOC***************
+                 * 44100 / 60.0 = 735.0
+                 * Samples per Frame: 44100 [S/s]* 1/60.0 [s/F] = 735.0 [S/F]
+                 *
+                 * Bytes per Sample: 2 (16-bit samples)
+                 * 735 * 2 = 1470 
+                 * Bytes per Frame = 735 [S/F] * 2 [B/S] = 1470 [B/F]
+                 *
+                 * I need to wait long enough that I'm not queueing too much, right?
+                 * If I wait too long, I hear an audible cut.
+                 * What's the sweet spot? I think it's the SDL_AudioSpec.size
+                 *
+                 * 2 channels * 2 bytes per sample * 4096 samples = spec.size
+                 *
+                 * I think it's unnecessary to guard against queuing too much: once the
+                 * amount queued exceeds the device buffer size, this will stop queueing
+                 * more. The idea is to fill the device buffer, even if the audio is super
+                 * short and fills the buffer many times.
+                 
+                 * *******************************/
+                if (queued < GameAudio::dev_buf_size)
+                { // Audio device buffer is partially empty, queue again to loop
+                    SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+                    if(DEBUG_AUDIO)
+                    {
+                        printf("BEFORE: queued %d bytes\n", queued);
+                        const Uint32 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
+                        printf("AFTER: queued %d bytes\n", queued);
+                    }
+                }
+            }
+
+        }
 
         ///////////
         // GAME ART
