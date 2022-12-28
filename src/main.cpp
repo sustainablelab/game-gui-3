@@ -1,12 +1,12 @@
 #include "SDL.h"
 #include "mg_colors.h"
 
-// [ ] add audio from callback (replaces add from file)
+// [ ] make my own audio data instead of audio from file
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
 constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
-constexpr bool AUDIO_CALLBACK = false;                  // False : queue audio instead of callback
+constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio instead of callback
 
 namespace Mouse
 { // Everyone wants to know about the mouse
@@ -75,9 +75,73 @@ namespace GameWin
 namespace GameAudio
 {
     SDL_AudioDeviceID dev;                              // Audio playback device handle
-    Uint32 dev_buf_size{};                             // Audio buffer size in bytes
-    Uint8* buf = NULL;
-    Uint32 len{};
+    Uint32 dev_buf_size{};                              // Audio buffer size in bytes
+    namespace Sound
+    {
+        Uint8* buf = NULL;                              // Sound buffer in memory
+        Uint32 len{};                                   // Number of bytes in buffer
+        // For callback (from loopwave.c)
+        int pos{};                                      // Position rel to start of buffer
+    }
+    // Callback : from loopwave.c
+    void SDLCALL fill_audio_dev(void* userdata, Uint8* stream, int len)
+    { // Copied from libsdl.org/SDL2/test/loopwave.c
+        (void)userdata;
+        Uint8* waveptr; int waveleft;
+        /* *************DOC***************
+         * This callback loads from the source buffer into the device buffer.
+         *
+         * I normally have no access to the device buffer.
+         * This callback lets me access its starting address and its length.
+         *
+         * userdata : no use for this yet
+         * stream : starting address of the audio device byte buffer
+         * len : length of the audio device byte buffer
+         *
+         * Sound::buf is my audio source.
+         * Sound::len is the number of bytes in my source.
+         *
+         * Sound::buf is an absolute address.
+         * Sound::pos and Sound::len are relative to Sound::buf.
+         *
+         * Similarly, "stream" is an absolute address and "len" is relative to stream.
+         *
+         * 0             15                 43 <--- Silly example numbers
+         * Sound::buf    Sound::pos         Sound::len
+         * ┬─────────    ┬─────────         ─────────┬
+         * ↓             ↓                           ↓
+         * ┌─────────────────────────────────────────┐
+         * │             x                           │
+         * └─────────────────────────────────────────┘
+         * ---------------SOURCE BUFFER---------------
+         *
+         * 0                                
+         * stream                                  len
+         * ┬─────                                  ──┬
+         * ↓                                         ↓
+         * ┌─────────────────────────────────────────┐
+         * │                                         │
+         * └─────────────────────────────────────────┘
+         * ---------------DEVICE BUFFER---------------
+         * *******************************/
+        waveptr = Sound::buf + Sound::pos;              // Source byte I'm up to
+        waveleft = Sound::len - Sound::pos;             // Source bytes left to copy
+        while(waveleft <= len)
+        {
+            // Copy from audio source data to audio device buffer
+            SDL_memcpy(stream, waveptr, waveleft);
+            // Advance audio device buffer
+            stream += waveleft;
+            // Update remaining space in audio device buffer
+            len -= waveleft;
+            // Point at start of audio source data
+            waveptr = Sound::buf;
+            waveleft = Sound::len;
+            Sound::pos = 0;
+        }
+        SDL_memcpy(stream, waveptr, len);
+        Sound::pos += len;
+    }
 }
 namespace GtoW
 { // Coordinate transform from GameArt coordinates to Window coordinates
@@ -104,7 +168,7 @@ SDL_Renderer* ren;
 
 void shutdown(void)
 {
-    SDL_FreeWAV(GameAudio::buf);
+    SDL_FreeWAV(GameAudio::Sound::buf);
     SDL_CloseAudioDevice(GameAudio::dev);
     SDL_DestroyTexture(GameArt::tex);
     SDL_DestroyRenderer(ren);
@@ -158,24 +222,29 @@ int main(int argc, char* argv[])
         // GAME AUDIO
         /////////////
 
-        SDL_AudioSpec wav_spec;
+        SDL_AudioSpec wav_spec{};
         { // 1. Load the WAV file
-            /* const char* wav = "data/windy-lily.wav"; */
+            const char* wav = "data/windy-lily.wav";
             /* const char* wav = "data/day01.wav"; */
-            const char* wav = "data/Dry-Kick.wav";
-            if (SDL_LoadWAV(wav, &wav_spec, &GameAudio::buf, &GameAudio::len) == NULL)
+            /* const char* wav = "data/Dry-Kick.wav"; */
+            if (SDL_LoadWAV(wav, &wav_spec,
+                    &GameAudio::Sound::buf, &GameAudio::Sound::len) == NULL)
             {
                 printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
                 shutdown(); return EXIT_FAILURE;
             }
         }
-        SDL_AudioSpec dev_spec;
+        if(AUDIO_CALLBACK)
+        { // Wire callback into SDL_AudioSpec
+            wav_spec.callback = GameAudio::fill_audio_dev;
+        }
+        SDL_AudioSpec dev_spec{};
         { // 2. Open an audio device to match WAV specs
             GameAudio::dev = SDL_OpenAudioDevice(NULL, 0, &wav_spec, &dev_spec, 0);
             GameAudio::dev_buf_size = dev_spec.size;
         }
         if(DEBUG)
-        { // Print the Audio device audio spec
+        { // Print the audio spec for audio device or audio file
 
             /* *************SDL_AudioSpec***************
              *  --- Audio device audio spec ---
@@ -194,22 +263,32 @@ int main(int argc, char* argv[])
              *  - spec.samples: 4096
              *  - spec.padding: 0
              *  - spec.size: 16384 bytes
-             *          - Compare with GameAudio::len : 2201596 bytes
+             *          - Compare with GameAudio::Sound::len : 2201596 bytes
              *
              * data/windy-lily.wav:
-             *      GameAudio::len : 2201596 bytes
+             *      GameAudio::Sound::len : 2201596 bytes
              *      Seconds of audio:
              2201596 / (2*44100*2.0) = 12.480703
              * data/Dry-Kick.wav:
-             *      GameAudio::len : 28048 bytes
+             *      GameAudio::Sound::len : 28048 bytes
              *      Seconds of audio:
              28048 / (2*44100*2.0) = 0.159002
              * *******************************/
 
-            SDL_AudioSpec spec = dev_spec;
-            puts("\n--- Audio device audio spec ---\n");
+            SDL_AudioSpec spec;
+            if(0)
+            { // wav_spec
+                spec = wav_spec;
+                puts("\n--- Audio file audio spec ---\n");
+            }
+            else
+            { // dev_spec
+                spec = dev_spec;
+                puts("\n--- Audio device audio spec ---\n");
+            }
             printf("- spec.freq: %d samples per second\n", spec.freq);
             printf("- spec.format: %d SDL_AudioFormat (flags)\n", spec.format);
+            printf("- spec.callback: %s\n", (spec.callback==NULL) ? "NULL" : "NOT NULL");
             printf("\t- bit size: %d\n", SDL_AUDIO_BITSIZE(spec.format));
             printf("\t- is float: %s\n", SDL_AUDIO_ISFLOAT(spec.format)?"yes":"no");
             printf("\t- is int: %s\n", SDL_AUDIO_ISINT(spec.format)?"yes":"no");
@@ -222,14 +301,15 @@ int main(int argc, char* argv[])
             printf("- spec.samples: %d\n", spec.samples);
             printf("- spec.padding: %d\n", spec.padding);
             printf("- spec.size: %d bytes\n", spec.size);
-            printf("\t- Compare with GameAudio::len : %d bytes\n", GameAudio::len);
+            printf("\t- Compare with GameAudio::Sound::len : %d bytes\n", GameAudio::Sound::len);
         }
         if(!AUDIO_CALLBACK)
-        {
+        { // Queue the audio
             Uint32 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
             while(queued < GameAudio::dev_buf_size)
             { // Queue multiple times if audio buffer is smaller than device buffer
-                SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+                SDL_QueueAudio(GameAudio::dev,
+                        GameAudio::Sound::buf, GameAudio::Sound::len);
                 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
             }
         }
@@ -559,7 +639,8 @@ int main(int argc, char* argv[])
                  * *******************************/
                 if (queued < GameAudio::dev_buf_size)
                 { // Audio device buffer is partially empty, queue again to loop
-                    SDL_QueueAudio(GameAudio::dev, GameAudio::buf, GameAudio::len);
+                    SDL_QueueAudio(GameAudio::dev,
+                            GameAudio::Sound::buf, GameAudio::Sound::len);
                     if(DEBUG_AUDIO)
                     {
                         printf("BEFORE: queued %d bytes\n", queued);
