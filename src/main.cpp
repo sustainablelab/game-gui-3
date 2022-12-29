@@ -274,7 +274,19 @@ int main(int argc, char* argv[])
             {
                 int sample;                             // 16-bit signed little-endian
                 float f;                                // sample as a float [-0.5:0.5]
-                int A = (1<<11);                        // Amplitude : max = (1<<15) - 1
+                int A;                                  // Amplitude : max = (1<<15) - 1
+
+                // NOTE: Why do I need my speaker 8x louder than my headphones?
+
+                if(0)
+                { // headphones
+                    A = (1<<11) - 1;
+                }
+                if(1)
+                { // speaker
+                    A = (1<<14) - 1;
+                }
+
                 if(0)
                 { // Sawtooth
                   // f = [0:1]
