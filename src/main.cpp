@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "SDL.h"
 #include "mg_colors.h"
 
@@ -23,7 +24,7 @@ namespace UI
         bool fullscreen_toggled{};
         // TODO: loop_audio only affects queued audio. Extend to callback audio.
         bool loop_audio{true};
-        bool load_audio_from_file{true};
+        bool load_audio_from_file{false};
     }
     bool is_fullscreen{};
 }
@@ -238,10 +239,10 @@ int main(int argc, char* argv[])
             }
         }
         else
-        { // Set the audio spec manually for making my own sounds
+        { // Set the audio spec manually and put my own sounds in the buffer
             // For now, I'm going to use the same WAV spec Audacity generates.
             wav_spec.freq = 44100;                      // 44100 samples per second
-            wav_spec.channels = 2;
+            wav_spec.channels = 1;
             wav_spec.silence = 0;
             wav_spec.samples = 4096;
             wav_spec.padding = 0;
@@ -258,6 +259,52 @@ int main(int argc, char* argv[])
                 if(ISSIGNED)    wav_spec.format |= SDL_AUDIO_MASK_SIGNED;
             }
             wav_spec.userdata = NULL;
+
+            ///////////////
+            // MAKE A SOUND
+            ///////////////
+            // Let the buffer length be driven by the period of the sound
+            constexpr int NUM_PERIODS = 110;            // If sound is periodic, how many?
+            constexpr int NUM_SAMPLES = 400;            // Samples per period
+            if(1) GameAudio::Sound::len = NUM_PERIODS*NUM_SAMPLES*BYTES_PER_SAMPLE;
+            GameAudio::Sound::buf = (Uint8*)malloc(GameAudio::Sound::len);
+            // 44100 [S/s] * / NUM_SAMPLES = tone Hz
+            Uint8* buf = GameAudio::Sound::buf;       // buf : walk buf
+            for(int i=0; i < (NUM_PERIODS*NUM_SAMPLES); i++)
+            {
+                int sample;                             // 16-bit signed little-endian
+                float f;                                // sample as a float [-0.5:0.5]
+                int A = (1<<11);                        // Amplitude : max = (1<<15) - 1
+                if(0)
+                { // Sawtooth
+                  // f = [0:1]
+                  // Say NUM_SAMPLES=400, then f = [0/399:399/399]
+                    f = (static_cast<float>(i%NUM_SAMPLES))/(NUM_SAMPLES-1);
+                    // f = [-0.5:0.5]
+                    f -= 0.5;
+                    sample = static_cast<int>(A*f);     // Scale up to amplitude A
+                }
+                if(1)
+                { // Triangle
+                  // f = [0:1:0]
+                    int TOP = NUM_SAMPLES/2;
+                    int n = (i%TOP);
+                    if(((i/TOP)%2)!=0) n = (TOP-1)-n;
+                    f = (static_cast<float>(n))/(TOP-1);
+                    // f = [-0.5:0.5]
+                    f -= 0.5;
+                    sample = static_cast<int>(A*f);     // Scale up to amplitude A
+                }
+                if(0)
+                { // Noise
+                    f = ((static_cast<float>(rand())/RAND_MAX));
+                    f -= 0.5;
+                    sample = static_cast<int>(A*f);
+                }
+                // Little Endian (LSB at lower address)
+                *buf++ = (Uint8)(sample&0xFF);      // LSB
+                *buf++ = (Uint8)(sample>>8);        // MSB
+            }
         }
         if(AUDIO_CALLBACK)
         { // Wire callback into SDL_AudioSpec
@@ -541,7 +588,7 @@ int main(int argc, char* argv[])
                 case SDL_TEXTINPUT:
                     if(DEBUG_UI)
                     {
-                        char buf[64]; sprintf(buf,"e.text \"SDL_TEXTINPUT\" e.text: \"%s\"",e.text.text);
+                        char buf[128]; sprintf(buf,"e.text \"SDL_TEXTINPUT\" e.text: \"%s\"",e.text.text);
                         UnusedUI::msg(__LINE__,buf,e.common.timestamp);
                     }
                     break;
