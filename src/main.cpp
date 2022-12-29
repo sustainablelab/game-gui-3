@@ -20,8 +20,10 @@ namespace UI
     {
         bool window_size_changed{true};
         bool mouse_moved{};
-        bool loop_audio{true};
         bool fullscreen_toggled{};
+        // TODO: loop_audio only affects queued audio. Extend to callback audio.
+        bool loop_audio{true};
+        bool load_audio_from_file{true};
     }
     bool is_fullscreen{};
 }
@@ -223,6 +225,7 @@ int main(int argc, char* argv[])
         /////////////
 
         SDL_AudioSpec wav_spec{};
+        if (UI::Flags::load_audio_from_file)
         { // 1. Load the WAV file
             const char* wav = "data/windy-lily.wav";
             /* const char* wav = "data/day01.wav"; */
@@ -233,6 +236,28 @@ int main(int argc, char* argv[])
                 printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
                 shutdown(); return EXIT_FAILURE;
             }
+        }
+        else
+        { // Set the audio spec manually for making my own sounds
+            // For now, I'm going to use the same WAV spec Audacity generates.
+            wav_spec.freq = 44100;                      // 44100 samples per second
+            wav_spec.channels = 2;
+            wav_spec.silence = 0;
+            wav_spec.samples = 4096;
+            wav_spec.padding = 0;
+            constexpr int BYTES_PER_SAMPLE = 2;
+            wav_spec.size = wav_spec.samples * wav_spec.channels * BYTES_PER_SAMPLE;
+            { // SDL_AudioFormat format: 16-bit little endian signed int
+                constexpr uint8_t BITSIZE  = 8*BYTES_PER_SAMPLE;
+                constexpr bool ISFLOAT     = false;     // int
+                constexpr bool ISBIGENDIAN = false;     // little endian
+                constexpr bool ISSIGNED    = true;      // signed
+                wav_spec.format = BITSIZE;
+                if(ISFLOAT)     wav_spec.format |= SDL_AUDIO_MASK_DATATYPE;
+                if(ISBIGENDIAN) wav_spec.format |= SDL_AUDIO_MASK_ENDIAN;
+                if(ISSIGNED)    wav_spec.format |= SDL_AUDIO_MASK_SIGNED;
+            }
+            wav_spec.userdata = NULL;
         }
         if(AUDIO_CALLBACK)
         { // Wire callback into SDL_AudioSpec
