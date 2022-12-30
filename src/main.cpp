@@ -211,6 +211,13 @@ int main(int argc, char* argv[])
         SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
         win = SDL_CreateWindow(argv[0], wI.x, wI.y, wI.w, wI.h, wI.flags);
         ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_PRESENTVSYNC|SDL_RENDERER_ACCELERATED);
+        if(argc==1)
+        { // Try setting window opacity to 50% (when run with ;r<Space>)
+            if( SDL_SetWindowOpacity(win, 0.5) < 0 )
+            { // Not a big deal if this fails.
+                if(DEBUG) printf("%d : SDL error msg: %s\n",__LINE__,SDL_GetError());
+            }
+        }
         ///////////
         // GAME ART
         ///////////
