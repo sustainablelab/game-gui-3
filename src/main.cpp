@@ -90,6 +90,7 @@ namespace GameAudio
 {
     SDL_AudioDeviceID dev;                              // Audio playback device handle
     Uint32 dev_buf_size{};                              // Audio buffer size in bytes
+    constexpr int BYTES_PER_SAMPLE = 2;                 // 16-bit audio
     namespace Sound
     {
         Uint8* buf = NULL;                              // Sound buffer in memory
@@ -100,78 +101,171 @@ namespace GameAudio
     // Callback : from loopwave.c
     void SDLCALL fill_audio_dev(void* userdata, Uint8* stream, int len)
     { // Copied from libsdl.org/SDL2/test/loopwave.c
-        (void)userdata;
-        Uint8* waveptr; int waveleft;
-        /* *************DOC***************
-         * This callback loads from the source buffer (audio tape) into the device buffer.
-         *
-         * The source buffer is much larger than the device buffer.
-         *      Say the device buffer is 4096 mono 16-bit samples.
-         *      That's 2^12 * 2 bytes, or 8192 bytes.
-         *      Playing that at 44100 samples per second, the device buffer holds only about
-         *      92ms of audio.
-         *      Say the source buffer is one seconds worth of audio.
-         *      Playing that at 44100 samples per second, the source buffer holds 44100
-         *      samples.
-         *      Since these are mono 16-bit samples, that's just 2 bytes per sample,
-         *      so the source buffer is 88,200 bytes.
-         *      That's big, but not crazy big. It's 200 bytes larger than what I've been
-         *      playing with in my initial tests.
-         *      Allocate that in static memory when the program starts and never deallocate.
-         *      It can definitely be smaller, I just don't have a good sense of the
-         *      constraints yet. But it's fine at this size, so just go for it.
-         *
-         * I normally have no access to the device buffer.
-         * This callback lets me access its starting address and its length.
-         *
-         * userdata : no use for this yet
-         * stream : starting address of the audio device byte buffer
-         * len : length of the audio device byte buffer
-         *
-         * Sound::buf is my audio source.
-         * Sound::len is the number of bytes in my source.
-         *
-         * Sound::buf is an absolute address.
-         * Sound::pos and Sound::len are relative to Sound::buf.
-         *
-         * Similarly, "stream" is an absolute address and "len" is relative to stream.
-         *
-         * 0             15                 43 <--- Silly example numbers
-         * Sound::buf    Sound::pos         Sound::len
-         * ┬─────────    ┬─────────         ─────────┬
-         * ↓             ↓                           ↓
-         * ┌─────────────────────────────────────────┐
-         * │             x                           │
-         * └─────────────────────────────────────────┘
-         * ---------------SOURCE BUFFER---------------
-         *
-         * 0                                
-         * stream                                  len
-         * ┬─────                                  ──┬
-         * ↓                                         ↓
-         * ┌─────────────────────────────────────────┐
-         * │                                         │
-         * └─────────────────────────────────────────┘
-         * ---------------DEVICE BUFFER---------------
-         * *******************************/
-        waveptr = Sound::buf + Sound::pos;              // Source byte I'm up to
-        waveleft = Sound::len - Sound::pos;             // Source bytes left to copy
-        while(waveleft <= len)
-        {
-            // Copy from audio source data to audio device buffer
-            SDL_memcpy(stream, waveptr, waveleft);
-            // Advance audio device buffer
-            stream += waveleft;
-            // Update remaining space in audio device buffer
-            len -= waveleft;
-            // Point at start of audio source data
-            waveptr = Sound::buf;
-            waveleft = Sound::len;
-            Sound::pos = 0;
+        { // Copy from Sound::buf to audio device
+            (void)userdata;
+            Uint8* waveptr; int waveleft;
+            /* *************DOC***************
+             * This callback loads from the source buffer (audio tape) into the device buffer.
+             *
+             * The source buffer is much larger than the device buffer.
+             *      Say the device buffer is 4096 mono 16-bit samples.
+             *      That's 2^12 * 2 bytes, or 8192 bytes.
+             *      Playing that at 44100 samples per second, the device buffer holds only about
+             *      92ms of audio.
+             *      Say the source buffer is one seconds worth of audio.
+             *      Playing that at 44100 samples per second, the source buffer holds 44100
+             *      samples.
+             *      Since these are mono 16-bit samples, that's just 2 bytes per sample,
+             *      so the source buffer is 88,200 bytes.
+             *      That's big, but not crazy big. It's 200 bytes larger than what I've been
+             *      playing with in my initial tests.
+             *      Allocate that when the program starts and only deallocate at shutdown.
+             *      It can definitely be smaller, I just don't have a good sense of the
+             *      constraints yet. But it's fine at this size, so just go for it.
+             *
+             * I normally have no access to the device buffer.
+             * This callback lets me access its starting address and its length.
+             *
+             * userdata : no use for this yet
+             * stream : starting address of the audio device byte buffer
+             * len : length of the audio device byte buffer
+             *
+             * Sound::buf is my audio source.
+             * Sound::len is the number of bytes in my source.
+             *
+             * Sound::buf is an absolute address.
+             * Sound::pos and Sound::len are relative to Sound::buf.
+             *
+             * Similarly, "stream" is an absolute address and "len" is relative to stream.
+             *
+             * 0               16              42 <--- Silly example numbers
+             * Sound::buf      Sound::pos      Sound::len
+             * ┬─────────      ┬─────────      ─────────┬
+             * ↓               ↓                        ↓
+             * ┌─────────────────────────────────────────┐
+             * 0               x                        !│
+             * └─────────────────────────────────────────┘
+             * ---------------SOURCE BUFFER---------------
+             *
+             * 0
+             * stream       len
+             * ┬─────       ──┬
+             * ↓              ↓
+             * ┌───────────────┐
+             * 0              !│
+             * └───────────────┘
+             * --DEVICE BUFFER--
+             *
+             * Here is an example of how this plays out using made-up tiny numbers.
+             *
+             * len = 16 unless otherwise noted
+             *
+             * SDL_memcpy(stream, waveptr, len)
+             * |               SDL_memcpy(stream, waveptr, len)
+             * |               |               SDL_memcpy(stream, waveptr, waveleft)
+             * |               |               |                           = 10
+             * |               |               |         SDL_memcpy(stream, waveptr, len)
+             * |               |               |         |                  = 0      = 6
+             * |               |               |         |     SDL_memcpy(stream, waveptr, len)
+             * |               |               |         |     |               SDL_memcpy(stream, waveptr, len)
+             * |               |               |         |     |               |               SDL_memcpy(stream, waveptr, waveleft)
+             * |               |               |         |     |               |               |                           = 4
+             * v               v               v         v     v               v               v
+             * 0               16              32        0     6               22              38
+             * waveptr         waveptr         waveptr waveptr waveptr         waveptr         waveptr
+             * ┬──────         ┬──────         ┬──────  ─┬──── ┬──────         ┬──────         ┬──────
+             * ↓               ↓               ↓         ↓     ↓               ↓               ↓
+            * ┌───────────────|───────────────|─────────┌─────|───────────────|───────────────|───┐
+                * 0              !0              !0        !0    !0              !0              !0   │
+                * └───────────────|───────────────|─────────└─────────────────────|───────────────|───┘
+                * 0--------------SOURCE BUFFER--------------0--------------SOURCE BUFFER--------------
+                * ┌───────────────┌───────────────┌─────────|─────┌───────────────┌───────────────┐
+                * 0              !0              !0        !0    !0              !0              !│
+                * └───────────────└───────────────└─────────|─────└───────────────└───────────────┘
+                * 0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-
+                * *******************************/
+            waveptr = Sound::buf + Sound::pos;              // Source byte I'm up to
+            waveleft = Sound::len - Sound::pos;             // Source bytes left to copy
+            /* while(waveleft <= len) // WHY DID SDL FOLKS MAKE THIS a while() loop?*/
+            if(waveleft <= len)
+            { // Near end of Sound::buf, copy the last bit of sound to device
+                /* *************DOC***************
+                 * waveleft : amount of audio left until the "end of the tape"
+                 * len : size of audio device buffer (tiny compared to size of audio tape)
+                 *
+                 * See my sketch above that shows this branch is the wraparound case.
+                 *
+                 * ******************************/
+                // Copy from Sound::buf to audio device buffer
+                SDL_memcpy(stream, waveptr, waveleft);
+                // Advance audio device buffer
+                stream += waveleft;
+                // Update remaining space in audio device buffer
+                len -= waveleft;
+                // Wrap back around to start of Sound::buf
+                // Point at start of Sound::buf
+                waveptr = Sound::buf;
+                waveleft = Sound::len;
+                Sound::pos = 0;
+            }
+            SDL_memcpy(stream, waveptr, len);
+            Sound::pos += len;
         }
-        SDL_memcpy(stream, waveptr, len);
-        Sound::pos += len;
+        if(1)
+        { // Write next bit of sound for consumption in next callback
+            Uint8* buf = Sound::buf + Sound::pos;           // buf : walk Sound::buf
+            int bytesleft = Sound::len - Sound::pos;        // Bytes until wraparound
+            int samplesleft = bytesleft/BYTES_PER_SAMPLE;   // Samples until wraparound
+            int NUM_SAMPLES = dev_buf_size/BYTES_PER_SAMPLE;// Samples I want to write
+            // INTERACTIVE
+            constexpr int A_MAX = (1<<11) - 1;
+            float A = A_MAX*Mouse::x/static_cast<float>(GameArt::w);
+            if(samplesleft <  NUM_SAMPLES)
+            { // Not enough room: write part of it, then wraparound and write the rest
+                int sample; float f;
+                // TODO: start at Waveform::phase (not always 0)
+                for(int i=0; i<samplesleft; i++)
+                { // NOISE
+                    { // Noise
+                        f = ((static_cast<float>(rand())/RAND_MAX));
+                        f -= 0.5;
+                        sample = static_cast<int>(A*f);
+                    }
+                    // Little Endian (LSB at lower address)
+                    *buf++ = (Uint8)(sample&0xFF);      // LSB
+                    *buf++ = (Uint8)(sample>>8);        // MSB
+                }
+                // Set up to write the rest after wraparound
+                NUM_SAMPLES -= samplesleft;
+                buf = Sound::buf;                       // Point back at start of Sound::buf
+            }
+            if(0)
+            { // Debug prints!
+                printf("%d : samplesleft: %d\n",__LINE__, samplesleft);
+                printf("%d : NUM_SAMPLES: %d\n",__LINE__, NUM_SAMPLES);
+                fflush(stdout);
+            }
+            // Write the rest (or all of it if there was enough room)
+            int sample; float f;
+            // TODO: start at Waveform::phase (not always 0)
+            for(int i=0; i<NUM_SAMPLES; i++)
+            { // NOISE
+                { // Noise
+                    f = ((static_cast<float>(rand())/RAND_MAX));
+                    f -= 0.5;
+                    sample = static_cast<int>(A*f);
+                }
+                // Little Endian (LSB at lower address)
+                *buf++ = (Uint8)(sample&0xFF);      // LSB
+                *buf++ = (Uint8)(sample>>8);        // MSB
+            }
+        }
     }
+}
+namespace Waveform
+{
+    int phase;                                          // Sample number modulo one period
+    int freq;                                           // frequency in Hz
 }
 namespace GtoW
 { // Coordinate transform from GameArt coordinates to Window coordinates
@@ -266,6 +360,8 @@ int main(int argc, char* argv[])
         /////////////
 
         SDL_AudioSpec wav_spec{};
+        // If loading from file Sound::buf is set by file size.
+        // Else, making my own sound, Sound::buf is sized for 1s of audio.
         if (UI::Flags::load_audio_from_file)
         { // 1. Load the WAV file
             const char* wav = "data/windy-lily.wav";
@@ -280,24 +376,32 @@ int main(int argc, char* argv[])
         }
         else
         { // Set the audio spec manually and put my own sounds in the buffer
-            // For now, I'm going to use the same WAV spec Audacity generates.
-            // Except I'll do mono (for now) to keep it simple.
+
+            /* *************Audio Format***************
+             * For now, I'm going to use the same WAV spec Audacity generates.
+             * Except I'll do mono (for now) to keep it simple.
+             * *******************************/
+
             /////////////////////
-            // AUDIO DEVICE SETUP
+            // AUDIO DEVICE SETUP : See `wav_spec.freq` and `wav_sec.size`
             /////////////////////
             wav_spec.freq = 44100;                      // 44100 samples per second
-            wav_spec.channels = 1;
+            wav_spec.channels = 1;                      // mono
             wav_spec.silence = 0;
-            wav_spec.samples = 4096;
+            wav_spec.samples = 4096;                    // buffer size in samples
             wav_spec.padding = 0;
-            constexpr int BYTES_PER_SAMPLE = 2;
-            // wav_spec.size : audio device buffer size in bytes
-            //  - When audio device is almost out of data to play, it calls the callback to
-            //    get more data. The smaller wav_spec.size is, the more often the callback
-            //    gets called.
-            wav_spec.size = wav_spec.samples * wav_spec.channels * BYTES_PER_SAMPLE;
+            /* *************Audio Device Buffer Size***************
+             * wav_spec.size : audio device buffer size in bytes
+             *
+             *     When audio device is almost out of data to play,
+             *     it calls the callback to get more data.
+             *
+             *     The smaller wav_spec.size is, the more often the callback gets called.
+             *
+             * *******************************/
+            wav_spec.size = wav_spec.samples * wav_spec.channels * GameAudio::BYTES_PER_SAMPLE;
             { // SDL_AudioFormat format: 16-bit little endian signed int
-                constexpr uint8_t BITSIZE  = 8*BYTES_PER_SAMPLE;
+                constexpr uint8_t BITSIZE  = 8*GameAudio::BYTES_PER_SAMPLE;
                 constexpr bool ISFLOAT     = false;     // int
                 constexpr bool ISBIGENDIAN = false;     // little endian
                 constexpr bool ISSIGNED    = true;      // signed
@@ -308,67 +412,111 @@ int main(int argc, char* argv[])
             }
             wav_spec.userdata = NULL;                   // Nothing extra to send to callback
 
-            ///////////////
-            // MAKE A SOUND
-            ///////////////
-            // Let the buffer length be driven by the period of the sound
-            constexpr int NUM_PERIODS = 110;            // If sound is periodic, how many?
-            constexpr int NUM_SAMPLES = 400;            // Samples per period
-            if(1) GameAudio::Sound::len = NUM_PERIODS*NUM_SAMPLES*BYTES_PER_SAMPLE;
+            /////////////////////////////////////////////
+            // MAKE SOUND BUFFER AND INITIAL BIT OF SOUND
+            /////////////////////////////////////////////
+            
+            int NUM_PERIODS, NUM_SAMPLES;
+            if(0)
+            { // Let the buffer length be driven by the period of the sound
+                NUM_PERIODS = 110;            // If sound is periodic, how many?
+                NUM_SAMPLES = 400;            // Samples per period
+                GameAudio::Sound::len = NUM_PERIODS*NUM_SAMPLES*GameAudio::BYTES_PER_SAMPLE;
+            }
+            if(1)
+            { // Let the buffer length be one second
+                           /* [ bytes = Samples/sec   * bytes/sample     * sec ] */
+                GameAudio::Sound::len = wav_spec.freq * GameAudio::BYTES_PER_SAMPLE * 1;
+            }
+            if(0)
+            { // Set frequency of the triangle wave
+                Waveform::phase = 0;
+                Waveform::freq = 220;
+            }
             if(DEBUG)
-            {
+            { // Print Sound::buf size and audio device buffer size
                 printf("Audio \"source tape\" length: %6d bytes\n", GameAudio::Sound::len);
                 printf("Audio device buffer size:   %6d bytes\n", wav_spec.size);
             }
-            GameAudio::Sound::buf = (Uint8*)malloc(GameAudio::Sound::len);
-            // 44100 [S/s] * / NUM_SAMPLES = tone Hz
-            Uint8* buf = GameAudio::Sound::buf;       // buf : walk buf
-            for(int i=0; i < (NUM_PERIODS*NUM_SAMPLES); i++)
+
+            // Allocate memory for buf (memory is freed during shutdown)
             {
-                int sample;                             // 16-bit signed little-endian
-                float f;                                // sample as a float [-0.5:0.5]
-                int A;                                  // Amplitude : max = (1<<15) - 1
+                GameAudio::Sound::buf = (Uint8*)malloc(GameAudio::Sound::len);
+            }
 
-                // NOTE: Why do I need my speaker 8x louder than my headphones?
+            if(1)
+            { // Start off with only enough samples to fill device buffer once.
+                NUM_SAMPLES = wav_spec.size/GameAudio::BYTES_PER_SAMPLE;
+            }
+            Uint8* buf = GameAudio::Sound::buf;       // buf : walk Sound::buf
+            if(1)
+            { // Start off with just one chunk of audio (wav_spec.size) in the buf
+                int sample;                             // Save 16-bit signed little-endian
+                float f;                                // Calc as float [-0.5:0.5]
+                constexpr int A = (1<<11) - 1;          // Make it loud
+                // TODO: start at Waveform::phase (not always 0)
+                /* for(int i=0; i<wav_spec.freq; i++) */
+                for(int i=0; i<NUM_SAMPLES; i++)
+                { // Fill buf with one device buffer (wav_spec.size) worth of sound
+                    { // Noise
+                        f = ((static_cast<float>(rand())/RAND_MAX));
+                        f -= 0.5;
+                        sample = static_cast<int>(A*f);
+                    }
+                    // Little Endian (LSB at lower address)
+                    *buf++ = (Uint8)(sample&0xFF);      // LSB
+                    *buf++ = (Uint8)(sample>>8);        // MSB
+                }
+            }
+            if(0)
+            { // Fill the whole buffer with NUM_PERIODS of the waveform
+                for(int i=0; i < (NUM_PERIODS*NUM_SAMPLES); i++)
+                { // Fill the whole buffer with NUM_PERIODS of the waveform
+                    int sample;                             // 16-bit signed little-endian
+                    float f;                                // sample as a float [-0.5:0.5]
+                    int A;                                  // Amplitude : max = (1<<15) - 1
 
-                if(0)
-                { // headphones
-                    A = (1<<11) - 1;
-                }
-                if(1)
-                { // speaker
-                    A = (1<<14) - 1;
-                }
+                    // NOTE: Why do I need my speaker 8x louder than my headphones?
 
-                if(0)
-                { // Sawtooth
-                  // f = [0:1]
-                  // Say NUM_SAMPLES=400, then f = [0/399:399/399]
-                    f = (static_cast<float>(i%NUM_SAMPLES))/(NUM_SAMPLES-1);
-                    // f = [-0.5:0.5]
-                    f -= 0.5;
-                    sample = static_cast<int>(A*f);     // Scale up to amplitude A
+                    if(0)
+                    { // headphones
+                        A = (1<<11) - 1;
+                    }
+                    if(1)
+                    { // speaker
+                        A = (1<<14) - 1;
+                    }
+
+                    if(0)
+                    { // Sawtooth
+                      // f = [0:1]
+                      // Say NUM_SAMPLES=400, then f = [0/399:399/399]
+                        f = (static_cast<float>(i%NUM_SAMPLES))/(NUM_SAMPLES-1);
+                        // f = [-0.5:0.5]
+                        f -= 0.5;
+                        sample = static_cast<int>(A*f);     // Scale up to amplitude A
+                    }
+                    if(1)
+                    { // Triangle
+                      // f = [0:1:0]
+                        int TOP = NUM_SAMPLES/2;
+                        int n = (i%TOP);
+                        if(((i/TOP)%2)!=0) n = (TOP-1)-n;
+                        f = (static_cast<float>(n))/(TOP-1);
+                        // f = [-0.5:0.5]
+                        f -= 0.5;
+                        sample = static_cast<int>(A*f);     // Scale up to amplitude A
+                    }
+                    if(0)
+                    { // Noise
+                        f = ((static_cast<float>(rand())/RAND_MAX));
+                        f -= 0.5;
+                        sample = static_cast<int>(A*f);
+                    }
+                    // Little Endian (LSB at lower address)
+                    *buf++ = (Uint8)(sample&0xFF);      // LSB
+                    *buf++ = (Uint8)(sample>>8);        // MSB
                 }
-                if(1)
-                { // Triangle
-                  // f = [0:1:0]
-                    int TOP = NUM_SAMPLES/2;
-                    int n = (i%TOP);
-                    if(((i/TOP)%2)!=0) n = (TOP-1)-n;
-                    f = (static_cast<float>(n))/(TOP-1);
-                    // f = [-0.5:0.5]
-                    f -= 0.5;
-                    sample = static_cast<int>(A*f);     // Scale up to amplitude A
-                }
-                if(0)
-                { // Noise
-                    f = ((static_cast<float>(rand())/RAND_MAX));
-                    f -= 0.5;
-                    sample = static_cast<int>(A*f);
-                }
-                // Little Endian (LSB at lower address)
-                *buf++ = (Uint8)(sample&0xFF);      // LSB
-                *buf++ = (Uint8)(sample>>8);        // MSB
             }
         }
         if(AUDIO_CALLBACK)
@@ -685,10 +833,11 @@ int main(int argc, char* argv[])
         // PHYSICS
         //////////
         if(UI::Flags::mouse_moved)
-        { // Update mouse x,y
+        { // Update mouse x,y (Get GameArt coordinates)
             // TODO: need to use floats for this? Doesn't seem like it.
             Mouse::x = (Mouse::motion.x - GtoW::Offset::x)/GtoW::scale;
             Mouse::y = (Mouse::motion.y - GtoW::Offset::y)/GtoW::scale;
+            if(0) printf("Mouse x,y : %d,%d\n", Mouse::x, Mouse::y);
         }
         if(UI::Flags::fullscreen_toggled)
         {
