@@ -2,7 +2,18 @@
 #include "SDL.h"
 #include "mg_colors.h"
 
-// [ ] make my own audio data instead of audio from file
+/* *************Audio Tasks***************
+// [x] make my own audio data instead of audio from file
+//  - this is easy if the audio is just one thing that never changes
+//  - but now I want the audio to change
+// [ ] Use SDL_AudioStream
+//  - I'm doing stuff myself at the byte level for now
+//  - life will probably be much simpler if I use SDL_AudioStream
+// [ ] control audio with UI events
+// [ ] how do I tie note frequency to wave_spec.freq (44100 or 48000)?
+// [ ] how do I keep waveforms periodic regardless of buffer size
+//     (so there are no audio hiccups each time I hit end of buffer)?
+ * *******************************/
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
@@ -24,7 +35,7 @@ namespace UI
         bool fullscreen_toggled{};
         // TODO: loop_audio only affects queued audio. Extend to callback audio.
         bool loop_audio{true};
-        bool load_audio_from_file{false};
+        bool load_audio_from_file{false};               // Make my own audio in code!
     }
     bool is_fullscreen{};
 }
@@ -92,7 +103,23 @@ namespace GameAudio
         (void)userdata;
         Uint8* waveptr; int waveleft;
         /* *************DOC***************
-         * This callback loads from the source buffer into the device buffer.
+         * This callback loads from the source buffer (audio tape) into the device buffer.
+         *
+         * The source buffer is much larger than the device buffer.
+         *      Say the device buffer is 4096 mono 16-bit samples.
+         *      That's 2^12 * 2 bytes, or 8192 bytes.
+         *      Playing that at 44100 samples per second, the device buffer holds only about
+         *      92ms of audio.
+         *      Say the source buffer is one seconds worth of audio.
+         *      Playing that at 44100 samples per second, the source buffer holds 44100
+         *      samples.
+         *      Since these are mono 16-bit samples, that's just 2 bytes per sample,
+         *      so the source buffer is 88,200 bytes.
+         *      That's big, but not crazy big. It's 200 bytes larger than what I've been
+         *      playing with in my initial tests.
+         *      Allocate that in static memory when the program starts and never deallocate.
+         *      It can definitely be smaller, I just don't have a good sense of the
+         *      constraints yet. But it's fine at this size, so just go for it.
          *
          * I normally have no access to the device buffer.
          * This callback lets me access its starting address and its length.
@@ -209,6 +236,7 @@ int main(int argc, char* argv[])
     }
     { // SDL Setup
         SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
+        // TODO: error-handle these SDL_Create calls
         win = SDL_CreateWindow(argv[0], wI.x, wI.y, wI.w, wI.h, wI.flags);
         ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_PRESENTVSYNC|SDL_RENDERER_ACCELERATED);
         if(argc==1)
@@ -218,16 +246,21 @@ int main(int argc, char* argv[])
                 if(DEBUG) printf("%d : SDL error msg: %s\n",__LINE__,SDL_GetError());
             }
         }
+
         ///////////
         // GAME ART
         ///////////
-        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        if(1) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND); // Workhorse
+        if(0) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);   // Cool lighting effect!
         GameArt::tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, GameArt::w, GameArt::h);
         if(SDL_SetTextureBlendMode(GameArt::tex, SDL_BLENDMODE_BLEND) == -1)
-        {
+        { // TODO: why set tex blend mode? Makes no difference. Just ren blend mode.
+            // Maybe the idea is to set the render draw blend mode to WHATEVER the texture
+            // blend mode is?
             printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
             shutdown(); return EXIT_FAILURE;
         }
+
         /////////////
         // GAME AUDIO
         /////////////
@@ -248,12 +281,20 @@ int main(int argc, char* argv[])
         else
         { // Set the audio spec manually and put my own sounds in the buffer
             // For now, I'm going to use the same WAV spec Audacity generates.
+            // Except I'll do mono (for now) to keep it simple.
+            /////////////////////
+            // AUDIO DEVICE SETUP
+            /////////////////////
             wav_spec.freq = 44100;                      // 44100 samples per second
             wav_spec.channels = 1;
             wav_spec.silence = 0;
             wav_spec.samples = 4096;
             wav_spec.padding = 0;
             constexpr int BYTES_PER_SAMPLE = 2;
+            // wav_spec.size : audio device buffer size in bytes
+            //  - When audio device is almost out of data to play, it calls the callback to
+            //    get more data. The smaller wav_spec.size is, the more often the callback
+            //    gets called.
             wav_spec.size = wav_spec.samples * wav_spec.channels * BYTES_PER_SAMPLE;
             { // SDL_AudioFormat format: 16-bit little endian signed int
                 constexpr uint8_t BITSIZE  = 8*BYTES_PER_SAMPLE;
@@ -265,7 +306,7 @@ int main(int argc, char* argv[])
                 if(ISBIGENDIAN) wav_spec.format |= SDL_AUDIO_MASK_ENDIAN;
                 if(ISSIGNED)    wav_spec.format |= SDL_AUDIO_MASK_SIGNED;
             }
-            wav_spec.userdata = NULL;
+            wav_spec.userdata = NULL;                   // Nothing extra to send to callback
 
             ///////////////
             // MAKE A SOUND
@@ -274,6 +315,11 @@ int main(int argc, char* argv[])
             constexpr int NUM_PERIODS = 110;            // If sound is periodic, how many?
             constexpr int NUM_SAMPLES = 400;            // Samples per period
             if(1) GameAudio::Sound::len = NUM_PERIODS*NUM_SAMPLES*BYTES_PER_SAMPLE;
+            if(DEBUG)
+            {
+                printf("Audio \"source tape\" length: %6d bytes\n", GameAudio::Sound::len);
+                printf("Audio device buffer size:   %6d bytes\n", wav_spec.size);
+            }
             GameAudio::Sound::buf = (Uint8*)malloc(GameAudio::Sound::len);
             // 44100 [S/s] * / NUM_SAMPLES = tone Hz
             Uint8* buf = GameAudio::Sound::buf;       // buf : walk buf
@@ -768,6 +814,14 @@ int main(int argc, char* argv[])
                 SDL_Color c = Colors::lime;
                 SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 128);
                 SDL_RenderDrawLine(ren, GameArt::w/2,GameArt::h/2,Mouse::x,Mouse::y);
+            }
+            if(0)
+            { // Blue box
+                SDL_Color c = Colors::tardis;
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 128);
+                constexpr int SIZE = 100;
+                SDL_Rect r{GameArt::w/2-SIZE/2, GameArt::h/2-SIZE/2, SIZE, SIZE};
+                SDL_RenderFillRect(ren, &r);
             }
         }
 
