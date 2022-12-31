@@ -54,10 +54,11 @@ constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio i
 
 void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES, float A)
 { // Write `NUM_SAMPLES` at vol `A` to position `wpos` in audio tape
-    // TODO: Noise is temporary here. Move Noise and amplitude stuff out to a different
+    // TODO: Move sound generation and amplitude stuff out to a different
     //       function that generates the waveform samples. This function should literally
     //       just write samples to tape -- so it will read values from somewhere, it won't
     //       generate any samples.
+    //       The noise generation and amplitude scaling here is just a placeholder.
     int sample; float f;
     // TODO: start at Waveform::phase (not always 0)
     for(Uint32 i=0; i<NUM_SAMPLES; i++)
@@ -157,7 +158,7 @@ namespace GameAudio
     { // Copied from libsdl.org/SDL2/test/loopwave.c
         { // Copy from Sound::buf to audio device
             (void)userdata;
-            Uint8* waveptr; int waveleft;
+            Uint8* play_head; int tapeleft;
             /* *************DOC***************
              * This callback loads from the source buffer (audio tape) into the device buffer.
              *
@@ -214,60 +215,60 @@ namespace GameAudio
              *
              * len = 16 unless otherwise noted
              *
-             * SDL_memcpy(stream, waveptr, len)
-             * |               SDL_memcpy(stream, waveptr, len)
-             * |               |               SDL_memcpy(stream, waveptr, waveleft)
-             * |               |               |                           = 10
-             * |               |               |         SDL_memcpy(stream, waveptr, len)
+             * SDL_memcpy(stream, play_head, len)
+             * |               SDL_memcpy(stream, play_head, len)
+             * |               |               SDL_memcpy(stream, play_head, tapeleft)
+             * |               |               |                             = 10
+             * |               |               |         SDL_memcpy(stream, play_head, len)
              * |               |               |         |                  = 0      = 6
-             * |               |               |         |     SDL_memcpy(stream, waveptr, len)
-             * |               |               |         |     |               SDL_memcpy(stream, waveptr, len)
-             * |               |               |         |     |               |               SDL_memcpy(stream, waveptr, waveleft)
-             * |               |               |         |     |               |               |                           = 4
+             * |               |               |         |     SDL_memcpy(stream, play_head, len)
+             * |               |               |         |     |               SDL_memcpy(stream, play_head, len)
+             * |               |               |         |     |               |               SDL_memcpy(stream, play_head, tapeleft)
+             * |               |               |         |     |               |               |                             = 4
              * v               v               v         v     v               v               v
              * 0               16              32        0     6               22              38
-             * waveptr         waveptr         waveptr waveptr waveptr         waveptr         waveptr
-             * ┬──────         ┬──────         ┬──────  ─┬──── ┬──────         ┬──────         ┬──────
+             * play_head       play_head  play_head  play_head play_head       play_head       play_head
+             * ┬──────         ┬──────    ─────┬──── ────┬──── ┬────────       ┬──────         ┬──────
              * ↓               ↓               ↓         ↓     ↓               ↓               ↓
-            * ┌───────────────|───────────────|─────────┌─────|───────────────|───────────────|───┐
-                * 0              !0              !0        !0    !0              !0              !0   │
-                * └───────────────|───────────────|─────────└─────────────────────|───────────────|───┘
-                * 0--------------SOURCE BUFFER--------------0--------------SOURCE BUFFER--------------
-                * ┌───────────────┌───────────────┌─────────|─────┌───────────────┌───────────────┐
-                * 0              !0              !0        !0    !0              !0              !│
-                * └───────────────└───────────────└─────────|─────└───────────────└───────────────┘
-                * 0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-
-                * *******************************/
-            waveptr = Sound::buf + Sound::pos;              // Source byte I'm up to
-            waveleft = Sound::len - Sound::pos;             // Source bytes left to copy
-            /* while(waveleft <= len) // WHY DID SDL FOLKS MAKE THIS a while() loop?*/
-            if(waveleft <= len)
+             * ┌───────────────|───────────────|─────────┌─────|───────────────|───────────────|───┐
+             * 0              !0              !0        !0    !0              !0              !0   │
+             * └───────────────|───────────────|─────────└─────────────────────|───────────────|───┘
+             * 0--------------SOURCE BUFFER--------------0--------------SOURCE BUFFER--------------
+             * ┌───────────────┌───────────────┌─────────|─────┌───────────────┌───────────────┐
+             * 0              !0              !0        !0    !0              !0              !│
+             * └───────────────└───────────────└─────────|─────└───────────────└───────────────┘
+             * 0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-0-DEVICE BUFFER-
+             * *******************************/
+            play_head = Sound::buf + Sound::pos;        // Source byte I'm up to
+            tapeleft = Sound::len - Sound::pos;         // Source bytes until wrap around
+            /* while(tapeleft <= len) // WHY DID SDL FOLKS MAKE THIS a while() loop?*/
+            if(tapeleft <= len)
             { // Near end of Sound::buf, copy the last bit of sound to device
                 /* *************DOC***************
-                 * waveleft : amount of audio left until the "end of the tape"
+                 * tapeleft : amount of audio left until the "end of the tape"
                  * len : size of audio device buffer (tiny compared to size of audio tape)
                  *
                  * See my sketch above that shows this branch is the wraparound case.
                  *
                  * ******************************/
                 // Copy from Sound::buf to audio device buffer
-                SDL_memcpy(stream, waveptr, waveleft);
+                SDL_memcpy(stream, play_head, tapeleft);
                 // Advance audio device buffer
-                stream += waveleft;
+                stream += tapeleft;
                 // Update remaining space in audio device buffer
-                len -= waveleft;
+                len -= tapeleft;
                 // Wrap back around to start of Sound::buf
                 // Point at start of Sound::buf
-                waveptr = Sound::buf;
-                waveleft = Sound::len;
+                play_head = Sound::buf;
+                tapeleft = Sound::len;
                 Sound::pos = 0;
             }
-            SDL_memcpy(stream, waveptr, len);
+            SDL_memcpy(stream, play_head, len);
             Sound::pos += len;
         }
         if(1)
         { // Write next bit of sound for consumption in next callback
-            Uint8* wpos = Sound::buf + Sound::pos;      // wpos : walk Sound::buf
+            Uint8* write_head = Sound::buf + Sound::pos;      // write_head : walk Sound::buf
             int bytesleft = Sound::len - Sound::pos;    // Bytes until wraparound
             int samplesleft = bytesleft/BYTES_PER_SAMPLE; // Samples until wraparound
             int NUM_SAMPLES = GameAudio::num_samples;   // Samples I want to write
@@ -306,10 +307,10 @@ namespace GameAudio
 
             if(samplesleft <  NUM_SAMPLES)
             { // Not enough room: write part of it, then wraparound and write the rest
-                write_tape(wpos, samplesleft, A);       // Final write before wrap around
+                write_tape(write_head, samplesleft, A);       // Final write before wrap around
                 // Set up to write the rest after wraparound
                 NUM_SAMPLES -= samplesleft;
-                wpos = Sound::buf;                      // Point back at start of Sound::buf
+                write_head = Sound::buf;                      // Point back at start of Sound::buf
             }
             if(0)
             { // Debug prints! Show samplesleft and NUM_SAMPLES
@@ -318,7 +319,7 @@ namespace GameAudio
                 fflush(stdout);
             }
             // Write the rest (or all of it if there was enough room)
-            write_tape(wpos, NUM_SAMPLES, A);           // Usually a full dev buf write
+            write_tape(write_head, NUM_SAMPLES, A);           // Usually a full dev buf write
         }
     }
 }
