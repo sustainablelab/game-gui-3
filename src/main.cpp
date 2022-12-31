@@ -52,6 +52,27 @@ constexpr bool DEBUG_UI = true;                         // True: print unused UI
 constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
 constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio instead of callback
 
+void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES, float A)
+{ // Write `NUM_SAMPLES` at vol `A` to position `wpos` in audio tape
+    // TODO: Noise is temporary here. Move Noise and amplitude stuff out to a different
+    //       function that generates the waveform samples. This function should literally
+    //       just write samples to tape -- so it will read values from somewhere, it won't
+    //       generate any samples.
+    int sample; float f;
+    // TODO: start at Waveform::phase (not always 0)
+    for(Uint32 i=0; i<NUM_SAMPLES; i++)
+    {
+        { // Noise (temporary - placeholder for read from something)
+            f = ((static_cast<float>(rand())/RAND_MAX));
+            f -= 0.5;
+            sample = static_cast<int>(A*f);
+        }
+        // Little Endian (LSB at lower address)
+        *wpos++ = (Uint8)(sample&0xFF);      // LSB
+        *wpos++ = (Uint8)(sample>>8);        // MSB
+    }
+}
+
 namespace Mouse
 { // Everyone wants to know about the mouse
     SDL_MouseMotionEvent motion{};                      // Info from motion event
@@ -246,10 +267,10 @@ namespace GameAudio
         }
         if(1)
         { // Write next bit of sound for consumption in next callback
-            Uint8* buf = Sound::buf + Sound::pos;           // buf : walk Sound::buf
-            int bytesleft = Sound::len - Sound::pos;        // Bytes until wraparound
-            int samplesleft = bytesleft/BYTES_PER_SAMPLE;   // Samples until wraparound
-            int NUM_SAMPLES = GameAudio::num_samples;       // Samples I want to write
+            Uint8* wpos = Sound::buf + Sound::pos;      // wpos : walk Sound::buf
+            int bytesleft = Sound::len - Sound::pos;    // Bytes until wraparound
+            int samplesleft = bytesleft/BYTES_PER_SAMPLE; // Samples until wraparound
+            int NUM_SAMPLES = GameAudio::num_samples;   // Samples I want to write
             //////////////
             // INTERACTIVE
             //////////////
@@ -285,50 +306,24 @@ namespace GameAudio
 
             if(samplesleft <  NUM_SAMPLES)
             { // Not enough room: write part of it, then wraparound and write the rest
-                int sample; float f;
-                // TODO: start at Waveform::phase (not always 0)
-                for(int i=0; i<samplesleft; i++)
-                { // NOISE
-                    { // Noise
-                        f = ((static_cast<float>(rand())/RAND_MAX));
-                        f -= 0.5;
-                        sample = static_cast<int>(A*f);
-                    }
-                    // Little Endian (LSB at lower address)
-                    *buf++ = (Uint8)(sample&0xFF);      // LSB
-                    *buf++ = (Uint8)(sample>>8);        // MSB
-                }
+                write_tape(wpos, samplesleft, A);       // Final write before wrap around
                 // Set up to write the rest after wraparound
                 NUM_SAMPLES -= samplesleft;
-                buf = Sound::buf;                       // Point back at start of Sound::buf
+                wpos = Sound::buf;                      // Point back at start of Sound::buf
             }
             if(0)
-            { // Debug prints!
+            { // Debug prints! Show samplesleft and NUM_SAMPLES
                 printf("%d : samplesleft: %d\n",__LINE__, samplesleft);
                 printf("%d : NUM_SAMPLES: %d\n",__LINE__, NUM_SAMPLES);
                 fflush(stdout);
             }
             // Write the rest (or all of it if there was enough room)
-            int sample; float f;
-            // TODO: start at Waveform::phase (not always 0)
-            for(int i=0; i<NUM_SAMPLES; i++)
-            { // NOISE
-                { // Noise
-                    f = ((static_cast<float>(rand())/RAND_MAX));
-                    f -= 0.5;
-                    sample = static_cast<int>(A*f);
-                }
-                // Little Endian (LSB at lower address)
-                *buf++ = (Uint8)(sample&0xFF);      // LSB
-                *buf++ = (Uint8)(sample>>8);        // MSB
-            }
+            write_tape(wpos, NUM_SAMPLES, A);           // Usually a full dev buf write
         }
     }
 }
 namespace Waveform
 {
-    int phase;                                          // Sample number modulo one period
-    int freq;                                           // frequency in Hz
 }
 namespace GtoW
 { // Coordinate transform from GameArt coordinates to Window coordinates
