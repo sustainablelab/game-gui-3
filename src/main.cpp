@@ -217,9 +217,38 @@ namespace GameAudio
             int bytesleft = Sound::len - Sound::pos;        // Bytes until wraparound
             int samplesleft = bytesleft/BYTES_PER_SAMPLE;   // Samples until wraparound
             int NUM_SAMPLES = dev_buf_size/BYTES_PER_SAMPLE;// Samples I want to write
+            //////////////
             // INTERACTIVE
+            //////////////
+            // Use mouse distance from game art center to set amplitude
             constexpr int A_MAX = (1<<11) - 1;
-            float A = A_MAX*Mouse::x/static_cast<float>(GameArt::w);
+            float A{};
+            if(0)
+            { // Method 1 : Abs value diff along x axis
+                int abs_diff;
+                {
+                    abs_diff = Mouse::x - (GameArt::w/2);
+                    if (abs_diff < 0 ) abs_diff *= -1;
+                    if(DEBUG)
+                    {
+                        if(abs_diff < 0)
+                        {
+                            printf("%d : Expected abs_diff >= 0, abs_diff = %d\n",__LINE__,abs_diff);
+                        }
+                    }
+                }
+                A = (A_MAX*((GameArt::w/2) - abs_diff)) / static_cast<float>(GameArt::w/2);
+            }
+            if(1)
+            { // Method 2 : Sum of square distances from center
+                // Only silent when mouse is in the corners of the screen
+                int cx = GameArt::w/2; int cy = GameArt::h/2;
+                int max = ((cx*cx)+(cy*cy));
+                int dx = Mouse::x - cx;
+                int dy = Mouse::y - cy;
+                A = (A_MAX*(max - ((dx*dx) + (dy*dy)))) / static_cast<float>(max);
+            }
+
             if(samplesleft <  NUM_SAMPLES)
             { // Not enough room: write part of it, then wraparound and write the rest
                 int sample; float f;
