@@ -3,16 +3,48 @@
 #include "mg_colors.h"
 
 /* *************Audio Tasks***************
-// [x] make my own audio data instead of audio from file
-//  - this is easy if the audio is just one thing that never changes
-//  - but now I want the audio to change
-// [ ] Use SDL_AudioStream
-//  - I'm doing stuff myself at the byte level for now
-//  - life will probably be much simpler if I use SDL_AudioStream
-// [ ] control audio with UI events
-// [ ] how do I tie note frequency to wave_spec.freq (44100 or 48000)?
-// [ ] how do I keep waveforms periodic regardless of buffer size
-//     (so there are no audio hiccups each time I hit end of buffer)?
+   [x] make my own audio data instead of audio from file
+    - this is easy if the audio is just one thing that never changes
+    - but now I want the audio to change
+    - that was a day's work, but I think I got the basic plumbing
+   [x] control audio with UI events
+   [ ] how do I tie note frequency to wave_spec.freq (44100 or 48000)?
+   [ ] how do I keep waveforms periodic regardless of buffer size
+       (so there are no audio hiccups each time I hit end of buffer)?
+   [ ] Use SDL_AudioStream
+    - I'm doing stuff myself at the byte level for now
+    - life will probably be much simpler if I use SDL_AudioStream
+ * *******************************/
+/* *************Latency***************
+ * Audio device has a buffer. I decide how big the buffer is.
+ *
+ * Audio device buffer size tradeoff:
+ * - smaller buffer : less latency between UI event and updating audio
+ * - bigger buffer : execution is interrupted less often
+ *
+ * I think of my audio sound buffer as an audio tape that I write to.
+ * I think of the audio device buffer as a playhead.
+ * I write to tape just ahead of the playhead.
+ *
+ * - the audio device has a buffer of 2^N samples
+ * - the audio device grabs those samples in the callback
+ * - at the end of the callback, I write the next 2^N samples to the buffer
+ *      - this guarantees that there is new audio to grab on the next callback
+ *      - it also means there's no notion of unsafe sections to write over
+ *      - the playhead sucks up a little audio, I drop a little pile just ahead, the
+ *        playhead sucks that up, and on it goes
+ *      - to kick off the whole process, I start off the audio by writing silence.
+ *
+ * - right now I'm only writing to the buffer in the callback
+ * - so my UI latency is 4096/44100 = 93ms
+ * - this is too much latency
+ * - I'd like to write to the buffer more often
+ * - a quick fix is to just make the audio device buffer much smaller
+ * - this makes the callback happen way more often
+ * - I found that a buffer of 512 samples feels right
+ * - 512/44100 = 11.6ms
+ * - my test is to move the mouse around to control the noise volume
+ * - if I don't hear "jumps" in the audio level, then latency is good
  * *******************************/
 
 constexpr bool DEBUG    = true;                         // True: general debug prints
@@ -90,6 +122,7 @@ namespace GameAudio
 {
     SDL_AudioDeviceID dev;                              // Audio playback device handle
     Uint32 dev_buf_size{};                              // Audio buffer size in bytes
+    Uint32 num_samples{};                               // Audio buffer size in samples
     constexpr int BYTES_PER_SAMPLE = 2;                 // 16-bit audio
     namespace Sound
     {
@@ -216,7 +249,7 @@ namespace GameAudio
             Uint8* buf = Sound::buf + Sound::pos;           // buf : walk Sound::buf
             int bytesleft = Sound::len - Sound::pos;        // Bytes until wraparound
             int samplesleft = bytesleft/BYTES_PER_SAMPLE;   // Samples until wraparound
-            int NUM_SAMPLES = dev_buf_size/BYTES_PER_SAMPLE;// Samples I want to write
+            int NUM_SAMPLES = GameAudio::num_samples;       // Samples I want to write
             //////////////
             // INTERACTIVE
             //////////////
@@ -225,6 +258,7 @@ namespace GameAudio
             float A{};
             if(0)
             { // Method 1 : Abs value diff along x axis
+                // Volume only depends on distance from center in x-direction
                 int abs_diff;
                 {
                     abs_diff = Mouse::x - (GameArt::w/2);
@@ -409,6 +443,9 @@ int main(int argc, char* argv[])
             /* *************Audio Format***************
              * For now, I'm going to use the same WAV spec Audacity generates.
              * Except I'll do mono (for now) to keep it simple.
+             * And I'll use a much smaller wav_spec.samples because that ends up being the
+             * audio device buffer size. I want a small buffer, like 2^9 samples, for low
+             * latency between UI events and audio changes.
              * *******************************/
 
             /////////////////////
@@ -417,7 +454,7 @@ int main(int argc, char* argv[])
             wav_spec.freq = 44100;                      // 44100 samples per second
             wav_spec.channels = 1;                      // mono
             wav_spec.silence = 0;
-            wav_spec.samples = 4096;                    // buffer size in samples
+            wav_spec.samples = (1<<9);                  // buffer size in samples
             wav_spec.padding = 0;
             /* *************Audio Device Buffer Size***************
              * wav_spec.size : audio device buffer size in bytes
@@ -425,8 +462,18 @@ int main(int argc, char* argv[])
              *     When audio device is almost out of data to play,
              *     it calls the callback to get more data.
              *
-             *     The smaller wav_spec.size is, the more often the callback gets called.
+             *     The smaller wav_spec.samples is, the more often the callback gets called.
+             *     The larger wav_spec.samples is, the more delay between UI and audio.
              *
+             *     Note it's wav_spec.samples that determines this timing tradeoff.
+             *     wav_spec.size is just wav_spec.samples scaled up by however many bytes it
+             *     takes to represent one sample:
+             *      - 16-bit audio is 2-bytes per sample
+             *      - stereo audio is 2-channels per sample
+             *      - so stereo 16-bit means wav_spec.size = 4*wav_spec.samples
+             *      - and mono 16-bit means wav_spec.size = 2*wav_spec.samples
+             *      - two different wav_spec.size values
+             *      - but same latency (because wav_spec.samples is the same)
              * *******************************/
             wav_spec.size = wav_spec.samples * wav_spec.channels * GameAudio::BYTES_PER_SAMPLE;
             { // SDL_AudioFormat format: 16-bit little endian signed int
@@ -441,111 +488,38 @@ int main(int argc, char* argv[])
             }
             wav_spec.userdata = NULL;                   // Nothing extra to send to callback
 
-            /////////////////////////////////////////////
-            // MAKE SOUND BUFFER AND INITIAL BIT OF SOUND
-            /////////////////////////////////////////////
-            
-            int NUM_PERIODS, NUM_SAMPLES;
-            if(0)
-            { // Let the buffer length be driven by the period of the sound
-                NUM_PERIODS = 110;            // If sound is periodic, how many?
-                NUM_SAMPLES = 400;            // Samples per period
-                GameAudio::Sound::len = NUM_PERIODS*NUM_SAMPLES*GameAudio::BYTES_PER_SAMPLE;
-            }
-            if(1)
+            ///////////////////////////////////////////////
+            // MAKE SOUND BUFFER AND INITIAL BIT OF SILENCE
+            ///////////////////////////////////////////////
+
+            constexpr int SECONDS = 1;
             { // Let the buffer length be one second
                            /* [ bytes = Samples/sec   * bytes/sample     * sec ] */
-                GameAudio::Sound::len = wav_spec.freq * GameAudio::BYTES_PER_SAMPLE * 1;
-            }
-            if(0)
-            { // Set frequency of the triangle wave
-                Waveform::phase = 0;
-                Waveform::freq = 220;
+                GameAudio::Sound::len = wav_spec.freq * GameAudio::BYTES_PER_SAMPLE * SECONDS;
             }
             if(DEBUG)
             { // Print Sound::buf size and audio device buffer size
-                printf("Audio \"source tape\" length: %6d bytes\n", GameAudio::Sound::len);
-                printf("Audio device buffer size:   %6d bytes\n", wav_spec.size);
+                printf("--- AUDIO SETUP (line %d) ---\n", __LINE__);
+                printf(" Audio \"source tape\" length: %6d bytes = %6d samples = %6f sec\n",
+                        GameAudio::Sound::len,
+                        GameAudio::Sound::len/GameAudio::BYTES_PER_SAMPLE,
+                        (float)GameAudio::Sound::len/(wav_spec.freq * GameAudio::BYTES_PER_SAMPLE)
+                      );
+                printf("Audio device buffer size:   %6d bytes = %6d samples = %6f sec\n",
+                        wav_spec.size,
+                        wav_spec.size/GameAudio::BYTES_PER_SAMPLE,
+                        (float)wav_spec.size/(wav_spec.freq * GameAudio::BYTES_PER_SAMPLE)
+                        );
             }
-
-            // Allocate memory for buf (memory is freed during shutdown)
-            {
+            { // Allocate memory for buf (memory is freed during shutdown)
                 GameAudio::Sound::buf = (Uint8*)malloc(GameAudio::Sound::len);
             }
-
-            if(1)
             { // Start off with only enough samples to fill device buffer once.
-                NUM_SAMPLES = wav_spec.size/GameAudio::BYTES_PER_SAMPLE;
+                GameAudio::num_samples = wav_spec.size/GameAudio::BYTES_PER_SAMPLE;
             }
             Uint8* buf = GameAudio::Sound::buf;       // buf : walk Sound::buf
-            if(1)
-            { // Start off with just one chunk of audio (wav_spec.size) in the buf
-                int sample;                             // Save 16-bit signed little-endian
-                float f;                                // Calc as float [-0.5:0.5]
-                constexpr int A = (1<<11) - 1;          // Make it loud
-                // TODO: start at Waveform::phase (not always 0)
-                /* for(int i=0; i<wav_spec.freq; i++) */
-                for(int i=0; i<NUM_SAMPLES; i++)
-                { // Fill buf with one device buffer (wav_spec.size) worth of sound
-                    { // Noise
-                        f = ((static_cast<float>(rand())/RAND_MAX));
-                        f -= 0.5;
-                        sample = static_cast<int>(A*f);
-                    }
-                    // Little Endian (LSB at lower address)
-                    *buf++ = (Uint8)(sample&0xFF);      // LSB
-                    *buf++ = (Uint8)(sample>>8);        // MSB
-                }
-            }
-            if(0)
-            { // Fill the whole buffer with NUM_PERIODS of the waveform
-                for(int i=0; i < (NUM_PERIODS*NUM_SAMPLES); i++)
-                { // Fill the whole buffer with NUM_PERIODS of the waveform
-                    int sample;                             // 16-bit signed little-endian
-                    float f;                                // sample as a float [-0.5:0.5]
-                    int A;                                  // Amplitude : max = (1<<15) - 1
-
-                    // NOTE: Why do I need my speaker 8x louder than my headphones?
-
-                    if(0)
-                    { // headphones
-                        A = (1<<11) - 1;
-                    }
-                    if(1)
-                    { // speaker
-                        A = (1<<14) - 1;
-                    }
-
-                    if(0)
-                    { // Sawtooth
-                      // f = [0:1]
-                      // Say NUM_SAMPLES=400, then f = [0/399:399/399]
-                        f = (static_cast<float>(i%NUM_SAMPLES))/(NUM_SAMPLES-1);
-                        // f = [-0.5:0.5]
-                        f -= 0.5;
-                        sample = static_cast<int>(A*f);     // Scale up to amplitude A
-                    }
-                    if(1)
-                    { // Triangle
-                      // f = [0:1:0]
-                        int TOP = NUM_SAMPLES/2;
-                        int n = (i%TOP);
-                        if(((i/TOP)%2)!=0) n = (TOP-1)-n;
-                        f = (static_cast<float>(n))/(TOP-1);
-                        // f = [-0.5:0.5]
-                        f -= 0.5;
-                        sample = static_cast<int>(A*f);     // Scale up to amplitude A
-                    }
-                    if(0)
-                    { // Noise
-                        f = ((static_cast<float>(rand())/RAND_MAX));
-                        f -= 0.5;
-                        sample = static_cast<int>(A*f);
-                    }
-                    // Little Endian (LSB at lower address)
-                    *buf++ = (Uint8)(sample&0xFF);      // LSB
-                    *buf++ = (Uint8)(sample>>8);        // MSB
-                }
+            { // Write silence in the initial bit of audio tape
+                for(Uint32 i=0; i<GameAudio::num_samples; i++) { *buf++ = 0; *buf++ = 0; }
             }
         }
         if(AUDIO_CALLBACK)
@@ -555,6 +529,14 @@ int main(int argc, char* argv[])
         SDL_AudioSpec dev_spec{};
         { // 2. Open an audio device to match WAV specs
             GameAudio::dev = SDL_OpenAudioDevice(NULL, 0, &wav_spec, &dev_spec, 0);
+            if(dev_spec.size != wav_spec.size)
+            {
+                if(DEBUG) printf("%d : Audio device buffer size is %d bytes, "
+                                 "expected %d bytes\n",
+                                __LINE__, dev_spec.size, wav_spec.size
+                                );
+                shutdown(); return EXIT_FAILURE;
+            }
             GameAudio::dev_buf_size = dev_spec.size;
         }
         if(DEBUG)
@@ -574,7 +556,7 @@ int main(int argc, char* argv[])
              *          - is unsigned: no
              *  - spec.channels: 2 (stereo)
              *  - spec.silence: 0
-             *  - spec.samples: 4096
+             *  - spec.samples: 4096 (file) or 512 (me)
              *  - spec.padding: 0
              *  - spec.size: 16384 bytes
              *          - Compare with GameAudio::Sound::len : 2201596 bytes
@@ -627,7 +609,7 @@ int main(int argc, char* argv[])
                 queued = SDL_GetQueuedAudioSize(GameAudio::dev);
             }
         }
-        SDL_PauseAudioDevice(GameAudio::dev, 0);
+        SDL_PauseAudioDevice(GameAudio::dev, 0);        // Start device playback!
     }
 
     srand(0);
