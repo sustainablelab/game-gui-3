@@ -156,24 +156,109 @@ namespace GameAudio
     // Callback : from loopwave.c
     void SDLCALL fill_audio_dev(void* userdata, Uint8* stream, int len)
     { // Copied from libsdl.org/SDL2/test/loopwave.c
+        // The example code is nice and general: source buffer size is decoupled from device
+        // buffer size. But why should I care? Why not just let source buffer always be an
+        // exact multiple of device buffer size? Like 10x? That would eliminate checking for
+        // the wraparound, which makes the code much simpler.
+        // TODO: try that. Any difference?
+        // TODO: change callback name to "read_tape_callback"
+        //       SDL callback where the audio device reads in the next bit of audio tape.
+        //       The callback then writes the bit of audio tape just after the bit that was
+        //       read.
+
+        /* *************DOC***************
+         * userdata : stuff I pass to callback, no use for this yet
+         * stream : audio device buffer
+         * len : size of audio device buffer
+         *
+         * Usually, this callback just does this:
+         *
+         *      // Get position in the audio tape
+         *      play_head = Sound::buf + Sound::pos;        // Source byte I'm up to
+         *
+         *      // Copy a len-sized bit from the tape to the audio device
+         *      SDL_memcpy(stream, play_head, len);
+         *
+         *      // Update the position in the audio tape
+         *      Sound::pos += len;
+         *
+         * Eventually, the audio tape reaches the end, or close to it.
+         * This is when the tape left is less than the audio device buffer size.
+         *
+         *      // How much tape is left?
+         *      tapeleft = Sound::len - Sound::pos;         // Source bytes until wrap around
+         *
+         *      // Is it enough to fill the device buffer?
+         *      if(tapeleft < len)
+         *      {
+         *          ...
+         *
+         * When that happens, first just copy whatever is left:
+         *
+         *      if(tapeleft < len)
+         *      {
+                    SDL_memcpy(stream, play_head, tapeleft);
+         *      }
+         *
+         *      // Update device buffer position and remaining space to fill
+         *      stream += tapeleft; len -= tapeleft;
+         *
+         * Note, the len will reset to the full buffer size the next time the callback is
+         * called. The function takes int len, not int* len. Similarly, the stream will
+         * reset to point at the start of the stream because the function takes Uint*
+         * stream, not Uint** stream.
+         *
+         *      // Tape wraparound 
+         *      play_head = Sound::buf;
+         *      tapeleft = Sound::len;
+         *      Sound::pos = 0;
+         *
+         *      // Copy a len-sized bit from the tape to the audio device
+         *      SDL_memcpy(stream, play_head, len);
+         *
+         *      // Update the position in the audio tape
+         *      Sound::pos += len;
+         *
+         * Note these last two lines read the same as the usual non-wraparound case, so it
+         * is the same code. But when these lines happen after a wraparound, stream and len
+         * are different from the usual values. stream is somewhere inside the device buffer
+         * and len is less than the buffer length.
+         * *******************************/
         { // Copy from Sound::buf to audio device
             (void)userdata;
             Uint8* play_head; int tapeleft;
             /* *************DOC***************
-             * This callback loads from the source buffer (audio tape) into the device buffer.
+             * This callback loads from the source buffer (audio tape) into the device
+             * buffer.
              *
              * The source buffer is much larger than the device buffer.
              *      Say the device buffer is 4096 mono 16-bit samples.
              *      That's 2^12 * 2 bytes, or 8192 bytes.
-             *      Playing that at 44100 samples per second, the device buffer holds only about
-             *      92ms of audio.
+             *      For a stereo wav file, the device buffer is double that (8192 bytes for
+             *      each channel).
+             *      Playing that at 44100 samples per second, the device buffer holds only
+             *      about 92ms of audio.
+             *      For generating audio from UI events, the device buffer should be smaller
+             *      to avoid latency (delay between when event happens and when sound
+             *      updates). UI events are handled once per frame, at 60 FPS that is about
+             *      16ms. For mono 16-bit samples at 44100 samples per second, use 2^9
+             *      samples. 2^9 samples * 2 bytes is 1024 bytes. This is a latency of
+             *      512/44100 = 0.01161 seconds, about 12ms, which means the callback
+             *      happens about once per frame. Any faster would be overkill (UI events
+             *      don't get processed any faster). And the latency feels OK.
+             *      So the device buffer is something like 512 samples or 4096 samples,
+             *      depending on whether I care about latency or if I just default to
+             *      whatever the wav file sample size is.
+             *
              *      Say the source buffer is one seconds worth of audio.
              *      Playing that at 44100 samples per second, the source buffer holds 44100
-             *      samples.
+             *      samples. The source buffer is 86x to 10x bigger than the device buffer.
+             *
              *      Since these are mono 16-bit samples, that's just 2 bytes per sample,
              *      so the source buffer is 88,200 bytes.
              *      That's big, but not crazy big. It's 200 bytes larger than what I've been
              *      playing with in my initial tests.
+             *
              *      Allocate that when the program starts and only deallocate at shutdown.
              *      It can definitely be smaller, I just don't have a good sense of the
              *      constraints yet. But it's fine at this size, so just go for it.
@@ -241,7 +326,6 @@ namespace GameAudio
              * *******************************/
             play_head = Sound::buf + Sound::pos;        // Source byte I'm up to
             tapeleft = Sound::len - Sound::pos;         // Source bytes until wrap around
-            /* while(tapeleft <= len) // WHY DID SDL FOLKS MAKE THIS a while() loop?*/
             if(tapeleft <= len)
             { // Near end of Sound::buf, copy the last bit of sound to device
                 /* *************DOC***************
@@ -266,45 +350,48 @@ namespace GameAudio
             SDL_memcpy(stream, play_head, len);
             Sound::pos += len;
         }
-        if(1)
         { // Write next bit of sound for consumption in next callback
-            Uint8* write_head = Sound::buf + Sound::pos;      // write_head : walk Sound::buf
-            int bytesleft = Sound::len - Sound::pos;    // Bytes until wraparound
-            int samplesleft = bytesleft/BYTES_PER_SAMPLE; // Samples until wraparound
+            Uint8* write_head = Sound::buf + Sound::pos;// write_head : walk Sound::buf
             int NUM_SAMPLES = GameAudio::num_samples;   // Samples I want to write
+
+            // TODO: pull amplitude setting code out of this callback
             //////////////
             // INTERACTIVE
             //////////////
             // Use mouse distance from game art center to set amplitude
-            constexpr int A_MAX = (1<<11) - 1;
             float A{};
-            if(0)
-            { // Method 1 : Abs value diff along x axis
-                // Volume only depends on distance from center in x-direction
-                int abs_diff;
-                {
-                    abs_diff = Mouse::x - (GameArt::w/2);
-                    if (abs_diff < 0 ) abs_diff *= -1;
-                    if(DEBUG)
+            { // Set amplitude A
+                constexpr int A_MAX = (1<<11) - 1;
+                if(0)
+                { // Method 1 : Abs value diff along x axis
+                  // Volume only depends on distance from center in x-direction
+                    int abs_diff;
                     {
-                        if(abs_diff < 0)
+                        abs_diff = Mouse::x - (GameArt::w/2);
+                        if (abs_diff < 0 ) abs_diff *= -1;
+                        if(DEBUG)
                         {
-                            printf("%d : Expected abs_diff >= 0, abs_diff = %d\n",__LINE__,abs_diff);
+                            if(abs_diff < 0)
+                            {
+                                printf("%d : Expected abs_diff >= 0, abs_diff = %d\n",__LINE__,abs_diff);
+                            }
                         }
                     }
+                    A = (A_MAX*((GameArt::w/2) - abs_diff)) / static_cast<float>(GameArt::w/2);
                 }
-                A = (A_MAX*((GameArt::w/2) - abs_diff)) / static_cast<float>(GameArt::w/2);
-            }
-            if(1)
-            { // Method 2 : Sum of square distances from center
-                // Only silent when mouse is in the corners of the screen
-                int cx = GameArt::w/2; int cy = GameArt::h/2;
-                int max = ((cx*cx)+(cy*cy));
-                int dx = Mouse::x - cx;
-                int dy = Mouse::y - cy;
-                A = (A_MAX*(max - ((dx*dx) + (dy*dy)))) / static_cast<float>(max);
+                if(1)
+                { // Method 2 : Sum of square distances from center
+                  // Only silent when mouse is in the corners of the screen
+                    int cx = GameArt::w/2; int cy = GameArt::h/2;
+                    int max = ((cx*cx)+(cy*cy));
+                    int dx = Mouse::x - cx;
+                    int dy = Mouse::y - cy;
+                    A = (A_MAX*(max - ((dx*dx) + (dy*dy)))) / static_cast<float>(max);
+                }
             }
 
+            int bytesleft = Sound::len - Sound::pos;    // Bytes until wraparound
+            int samplesleft=bytesleft/BYTES_PER_SAMPLE; // Samples until wraparound
             if(samplesleft <  NUM_SAMPLES)
             { // Not enough room: write part of it, then wraparound and write the rest
                 write_tape(write_head, samplesleft, A);       // Final write before wrap around
