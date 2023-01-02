@@ -8,9 +8,14 @@
     - but now I want the audio to change
     - that was a day's work, but I think I got the basic plumbing
    [x] control audio with UI events
-   [ ] how do I tie note frequency to wave_spec.freq (44100 or 48000)?
-   [ ] how do I keep waveforms periodic regardless of buffer size
+   [x] how do I tie note frequency to wave_spec.freq (44100 or 48000)?
+   [x] how do I keep waveforms periodic regardless of buffer size
        (so there are no audio hiccups each time I hit end of buffer)?
+       Ans: use phase [0:1]. Ratio of desired freq (note) to sample rate is how much to
+       increment phase each step. Use phase to calc waveform value, then advance phase one
+       step. On wraparound (phase >= 1), do not reset to zero! Instead, subtract one from
+       phase.
+   [ ] Describe waveform with a curve (do a triangle wave to replace sawtooth)
    [ ] Use SDL_AudioStream
     - I'm doing stuff myself at the byte level for now
     - life will probably be much simpler if I use SDL_AudioStream
