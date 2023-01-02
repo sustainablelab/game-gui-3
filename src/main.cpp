@@ -51,34 +51,15 @@ constexpr bool DEBUG    = true;                         // True: general debug p
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
 constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
 constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio instead of callback
-
-void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES, float A)
-{ // Write `NUM_SAMPLES` at vol `A` to position `wpos` in audio tape
-    // TODO: Move sound generation and amplitude stuff out to a different
-    //       function that generates the waveform samples. This function should literally
-    //       just write samples to tape -- so it will read values from somewhere, it won't
-    //       generate any samples.
-    //       The noise generation and amplitude scaling here is just a placeholder.
-    int sample; float f;
-    // TODO: start at Waveform::phase (not always 0)
-    for(Uint32 i=0; i<NUM_SAMPLES; i++)
-    {
-        { // Noise (temporary - placeholder for read from something)
-            f = ((static_cast<float>(rand())/RAND_MAX));
-            f -= 0.5;
-            sample = static_cast<int>(A*f);
-        }
-        // Little Endian (LSB at lower address)
-        *wpos++ = (Uint8)(sample&0xFF);      // LSB
-        *wpos++ = (Uint8)(sample>>8);        // MSB
-    }
-}
+constexpr int A_MAX = (1<<11) - 1;                      // Maximum volume of any single sound
 
 namespace Mouse
 { // Everyone wants to know about the mouse
     SDL_MouseMotionEvent motion{};                      // Info from motion event
     Sint32 x{};                                         // calculated mouse x
     Sint32 y{};                                         // calculated mouse y
+    float xf{};                                         // calculated mouse x as float
+    float yf{};                                         // calculated mouse y as float
 }
 namespace UI
 { // If UI event code does too much, move code out and make it a flag
@@ -90,8 +71,14 @@ namespace UI
         // TODO: loop_audio only affects queued audio. Extend to callback audio.
         bool loop_audio{true};
         bool load_audio_from_file{false};               // Make my own audio in code!
+        bool mouse_xy_isfloat{true};
     }
     bool is_fullscreen{};
+    namespace VCA
+    {
+        float mouse_center_dist;
+        float mouse_height;
+    }
 }
 namespace UnusedUI
 { // Debug print info about unused UI events (DEBUG_UI==true)
@@ -140,12 +127,17 @@ namespace GameWin
     int w = GameArt::w * GameArt::pixel_size;
     int h = GameArt::h * GameArt::pixel_size;
 }
+void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES);
 namespace GameAudio
 {
     SDL_AudioDeviceID dev;                              // Audio playback device handle
     Uint32 dev_buf_size{};                              // Audio buffer size in bytes
     Uint32 num_samples{};                               // Audio buffer size in samples
+
+    // For audio I make (not audio from file)
+    constexpr int SAMPLE_RATE = 44100;                  // 44100 samples per second
     constexpr int BYTES_PER_SAMPLE = 2;                 // 16-bit audio
+
     namespace Sound
     {
         Uint8* buf = NULL;                              // Sound buffer in memory
@@ -153,6 +145,7 @@ namespace GameAudio
         // For callback (from loopwave.c)
         int pos{};                                      // Position rel to start of buffer
     }
+
     // Callback : from loopwave.c
     void SDLCALL fill_audio_dev(void* userdata, Uint8* stream, int len)
     { // Copied from libsdl.org/SDL2/test/loopwave.c
@@ -354,47 +347,11 @@ namespace GameAudio
             Uint8* write_head = Sound::buf + Sound::pos;// write_head : walk Sound::buf
             int NUM_SAMPLES = GameAudio::num_samples;   // Samples I want to write
 
-            // TODO: pull amplitude setting code out of this callback
-            //////////////
-            // INTERACTIVE
-            //////////////
-            // Use mouse distance from game art center to set amplitude
-            float A{};
-            { // Set amplitude A
-                constexpr int A_MAX = (1<<11) - 1;
-                if(0)
-                { // Method 1 : Abs value diff along x axis
-                  // Volume only depends on distance from center in x-direction
-                    int abs_diff;
-                    {
-                        abs_diff = Mouse::x - (GameArt::w/2);
-                        if (abs_diff < 0 ) abs_diff *= -1;
-                        if(DEBUG)
-                        {
-                            if(abs_diff < 0)
-                            {
-                                printf("%d : Expected abs_diff >= 0, abs_diff = %d\n",__LINE__,abs_diff);
-                            }
-                        }
-                    }
-                    A = (A_MAX*((GameArt::w/2) - abs_diff)) / static_cast<float>(GameArt::w/2);
-                }
-                if(1)
-                { // Method 2 : Sum of square distances from center
-                  // Only silent when mouse is in the corners of the screen
-                    int cx = GameArt::w/2; int cy = GameArt::h/2;
-                    int max = ((cx*cx)+(cy*cy));
-                    int dx = Mouse::x - cx;
-                    int dy = Mouse::y - cy;
-                    A = (A_MAX*(max - ((dx*dx) + (dy*dy)))) / static_cast<float>(max);
-                }
-            }
-
             int bytesleft = Sound::len - Sound::pos;    // Bytes until wraparound
             int samplesleft=bytesleft/BYTES_PER_SAMPLE; // Samples until wraparound
             if(samplesleft <  NUM_SAMPLES)
             { // Not enough room: write part of it, then wraparound and write the rest
-                write_tape(write_head, samplesleft, A);       // Final write before wrap around
+                write_tape(write_head, samplesleft);       // Final write before wrap around
                 // Set up to write the rest after wraparound
                 NUM_SAMPLES -= samplesleft;
                 write_head = Sound::buf;                      // Point back at start of Sound::buf
@@ -406,12 +363,69 @@ namespace GameAudio
                 fflush(stdout);
             }
             // Write the rest (or all of it if there was enough room)
-            write_tape(write_head, NUM_SAMPLES, A);           // Usually a full dev buf write
+            write_tape(write_head, NUM_SAMPLES);           // Usually a full dev buf write
         }
     }
 }
 namespace Waveform
 {
+    float phase = 0;                                    // [0:1] : location in waveform
+    ////////////
+    // WAVEFORMS
+    ////////////
+    // Waveforms:
+    // - return a float in range -0.5 to 0.5
+    // - use Waveform::phase to calculate the return value
+    float sawtooth(void) { return (-0.5*(1-phase)) + (0.5*phase); }
+    float noise(void) { return (static_cast<float>(rand())/RAND_MAX) - 0.5; }
+    void advance(float freq)
+    {
+        /* *************DOC***************
+         * freq : float [Hz] of waveform
+         *
+         * Advance the waveform phase based on the frequency parameter.
+         *
+         * Advance the phase by some fraction of a period.
+         * The fraction of a period is in units of [Periods per Sample]:
+         *               freq / SAMPLE_RATE        = Fraction of a period
+         * Periods per second / Samples per second = Periods per Sample
+         *
+         * WHEN phase hits 1:
+         * - reached end of period
+         * - DO NOT reset phase to zero!
+         * - Subtract 1 instead
+         * - This allows the phase to "wraparound"
+         * - If I reset phase to zero, freq is noticeably quantized at high freq
+         * *******************************/
+        phase += (freq / static_cast<float>(GameAudio::SAMPLE_RATE));
+        if(phase >= 1) phase -= 1;
+    }
+}
+void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
+{ // Write `NUM_SAMPLES` to position `wpos` in audio tape
+    // TODO: Move sound generation and amplitude stuff out to a different
+    //       function that generates the waveform samples. This function should literally
+    //       just write samples to tape -- so it will read values from somewhere, it won't
+    //       generate any samples.
+    //       The noise generation and amplitude scaling here is just a placeholder.
+    int sample; float a;                                // Amplitude
+    for(Uint32 i=0; i<NUM_SAMPLES; i++)
+    {
+        if(1)
+        { // Parametric waveform -- use mouse to vary pitch, not amplitude
+            a = Waveform::sawtooth();                   // Get next waveform value
+            sample = static_cast<int>((A_MAX/4)*a);     // Convert to a 16-bit sample
+            Waveform::advance(UI::VCA::mouse_height*880); // Advance phase, get freq from mouse distance to center
+        }
+        if(1)
+        { // Noise -- mouse vary amplitude, add noise to other sounds
+            a = Waveform::noise();
+            sample += static_cast<int>(UI::VCA::mouse_center_dist*a*A_MAX);
+        }
+        // Little Endian (LSB at lower address)
+        *wpos++ = (Uint8)(sample&0xFF);      // LSB
+        *wpos++ = (Uint8)(sample>>8);        // MSB
+    }
 }
 namespace GtoW
 { // Coordinate transform from GameArt coordinates to Window coordinates
@@ -490,8 +504,8 @@ int main(int argc, char* argv[])
         ///////////
         // GAME ART
         ///////////
-        if(1) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND); // Workhorse
-        if(0) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);   // Cool lighting effect!
+        if(0) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND); // Workhorse
+        if(1) SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_ADD);   // Cool lighting effect!
         GameArt::tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, GameArt::w, GameArt::h);
         if(SDL_SetTextureBlendMode(GameArt::tex, SDL_BLENDMODE_BLEND) == -1)
         { // TODO: why set tex blend mode? Makes no difference. Just ren blend mode.
@@ -534,7 +548,7 @@ int main(int argc, char* argv[])
             /////////////////////
             // AUDIO DEVICE SETUP : See `wav_spec.freq` and `wav_sec.size`
             /////////////////////
-            wav_spec.freq = 44100;                      // 44100 samples per second
+            wav_spec.freq = GameAudio::SAMPLE_RATE;     // 44100 samples per second
             wav_spec.channels = 1;                      // mono
             wav_spec.silence = 0;
             wav_spec.samples = (1<<9);                  // buffer size in samples
@@ -700,9 +714,11 @@ int main(int argc, char* argv[])
     bool quit = false;
     while(!quit)
     {
-        /////
-        // UI
-        /////
+
+        /////////////////////
+        // UI - EVENT HANDLER
+        /////////////////////
+
         SDL_Event e; while(SDL_PollEvent(&e))
         { // Process all events, set flags for tricky ones
             switch(e.type)
@@ -717,6 +733,9 @@ int main(int argc, char* argv[])
                         case SDLK_F11:
                              UI::Flags::fullscreen_toggled = true;
                              break;
+                        case SDLK_SPACE:
+                             UI::Flags::mouse_xy_isfloat = !UI::Flags::mouse_xy_isfloat;
+                            break;
                         ////////////////////////
                         // UNUSED KEYDOWN EVENTS
                         ////////////////////////
@@ -928,10 +947,73 @@ int main(int argc, char* argv[])
         //////////
         if(UI::Flags::mouse_moved)
         { // Update mouse x,y (Get GameArt coordinates)
+            UI::Flags::mouse_moved = false;
+            Mouse::xf = (Mouse::motion.x - GtoW::Offset::x)/static_cast<float>(GtoW::scale);
+            Mouse::yf = (Mouse::motion.y - GtoW::Offset::y)/static_cast<float>(GtoW::scale);
             // TODO: need to use floats for this? Doesn't seem like it.
             Mouse::x = (Mouse::motion.x - GtoW::Offset::x)/GtoW::scale;
             Mouse::y = (Mouse::motion.y - GtoW::Offset::y)/GtoW::scale;
-            if(0) printf("Mouse x,y : %d,%d\n", Mouse::x, Mouse::y);
+            if(DEBUG_UI)
+            {
+                if(UI::Flags::mouse_xy_isfloat)
+                    {printf("Mouse x,y : %.3f,%.3f\n", Mouse::xf, Mouse::yf);}
+                else
+                    {printf("Mouse x,y : %d,%d\n", Mouse::x, Mouse::y);}
+            }
+            // Use mouse distance from game art center to set VCA
+            { // Set VCA amplitudes based on mouse position
+                if(0)
+                { // Method 1 : Abs value diff along x axis
+                  // Volume only depends on distance from center in x-direction
+                    int abs_diff;
+                    {
+                        abs_diff = Mouse::x - (GameArt::w/2);
+                        if (abs_diff < 0 ) abs_diff *= -1;
+                        if(DEBUG)
+                        {
+                            if(abs_diff < 0)
+                            {
+                                printf("%d : Expected abs_diff >= 0, abs_diff = %d\n",__LINE__,abs_diff);
+                            }
+                        }
+                    }
+                    UI::VCA::mouse_center_dist =
+                        ((GameArt::w/2) - abs_diff) /
+                        static_cast<float>(GameArt::w/2);
+                }
+                if(1)
+                { // Method 2 : Sum of square distances from center
+                  // Only silent when mouse is in the corners of the screen
+                    int cx = GameArt::w/2; int cy = GameArt::h/2;
+                    int max = ((cx*cx)+(cy*cy));
+                    if(UI::Flags::mouse_xy_isfloat)
+                    {
+                        float dx = Mouse::xf - cx;
+                        float dy = Mouse::yf - cy;
+                        UI::VCA::mouse_center_dist =
+                            (max - ((dx*dx) + (dy*dy))) /
+                            static_cast<float>(max);
+                        UI::VCA::mouse_height =
+                            (GameArt::h - Mouse::yf) /
+                            static_cast<float>(GameArt::h);
+                        if(DEBUG_UI) printf("%d : VCA mouse_center : %0.3f\n",__LINE__,UI::VCA::mouse_center_dist);
+                        if(DEBUG_UI) printf("%d : VCA mouse_height : %0.3f\n",__LINE__,UI::VCA::mouse_height);
+                    }
+                    else
+                    {
+                        int dx = Mouse::x - cx;
+                        int dy = Mouse::y - cy;
+                        UI::VCA::mouse_center_dist =
+                            (max - ((dx*dx) + (dy*dy))) /
+                            static_cast<float>(max);
+                        UI::VCA::mouse_height =
+                            (GameArt::h - Mouse::y) /
+                            static_cast<float>(GameArt::h);
+                        if(DEBUG_UI) printf("%d : VCA mouse_center : %0.3f\n",__LINE__,UI::VCA::mouse_center_dist);
+                        if(DEBUG_UI) printf("%d : VCA mouse_height : %0.3f\n",__LINE__,UI::VCA::mouse_height);
+                    }
+                }
+            }
         }
         if(UI::Flags::fullscreen_toggled)
         {
@@ -981,6 +1063,7 @@ int main(int argc, char* argv[])
             }
             if(DEBUG) printf("AFTER: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\tGtoW::scale: %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h, GtoW::scale);
         }
+
 
         /////////
         // RENDER
@@ -1058,12 +1141,16 @@ int main(int argc, char* argv[])
                 SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 128);
                 SDL_RenderDrawLine(ren, GameArt::w/2,GameArt::h/2,Mouse::x,Mouse::y);
             }
-            if(0)
+            if(1)
             { // Blue box
                 SDL_Color c = Colors::tardis;
-                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, 128);
-                constexpr int SIZE = 100;
-                SDL_Rect r{GameArt::w/2-SIZE/2, GameArt::h/2-SIZE/2, SIZE, SIZE};
+                int mod = UI::VCA::mouse_height*255;
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, mod);
+                int w = UI::VCA::mouse_center_dist*GameArt::w;
+                int h = UI::VCA::mouse_center_dist*GameArt::h;
+                int x = GameArt::w/2 - w/2;
+                int y = GameArt::h/2 - h/2;
+                SDL_Rect r{x,y,w,h};
                 SDL_RenderFillRect(ren, &r);
             }
         }
