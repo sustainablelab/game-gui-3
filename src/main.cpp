@@ -56,7 +56,7 @@ constexpr bool DEBUG    = true;                         // True: general debug p
 constexpr bool DEBUG_UI = true;                         // True: print unused UI events
 constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
 constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio instead of callback
-constexpr int A_MAX = (1<<11) - 1;                      // Maximum volume of any single sound
+constexpr int A_MAX = (1<<12) - 1;                      // Maximum volume of any single sound
 
 namespace Mouse
 { // Everyone wants to know about the mouse
@@ -77,6 +77,7 @@ namespace UI
         bool loop_audio{true};
         bool load_audio_from_file{false};               // Make my own audio in code!
         bool mouse_xy_isfloat{true};
+        bool pressed_space{};
     }
     bool is_fullscreen{};
     namespace VCA
@@ -380,12 +381,13 @@ namespace Waveform
     ////////////
     // Waveforms:
     // - return a float in range -0.5 to 0.5
-    // - use Waveform::phase to calculate the return value
-    float sawtooth(void) { return (-0.5*(1-phase)) + (0.5*phase); }
+    // - use phase to calculate the return value (if waveform is periodic)
+    float sawtooth(float phase) { return (-0.5*(1-phase)) + (0.5*phase); }
     float noise(void) { return (static_cast<float>(rand())/RAND_MAX) - 0.5; }
-    void advance(float freq)
+    void advance(float* phase, float freq)
     {
         /* *************DOC***************
+         * phase : time location [0:1] in one period of the waveform
          * freq : float [Hz] of waveform
          *
          * Advance the waveform phase based on the frequency parameter.
@@ -402,9 +404,16 @@ namespace Waveform
          * - This allows the phase to "wraparound"
          * - If I reset phase to zero, freq is noticeably quantized at high freq
          * *******************************/
-        phase += (freq / static_cast<float>(GameAudio::SAMPLE_RATE));
-        if(phase >= 1) phase -= 1;
+        *phase += (freq / static_cast<float>(GameAudio::SAMPLE_RATE));
+        if(*phase >= 1) *phase -= 1;
     }
+}
+// Array of phase values for each voice
+namespace Voices
+{
+    constexpr int MAX_COUNT = 8;
+    int count = 1;
+    float phase[MAX_COUNT]{};                               // [0:1] : location in waveform
 }
 void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
 { // Write `NUM_SAMPLES` to position `wpos` in audio tape
@@ -416,16 +425,27 @@ void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
     int sample; float a;                                // Amplitude
     for(Uint32 i=0; i<NUM_SAMPLES; i++)
     {
-        if(1)
+        if(1) // Play all Voices as a single mix of sawtooth harmonics
         { // Parametric waveform -- use mouse to vary pitch, not amplitude
-            a = Waveform::sawtooth();                   // Get next waveform value
-            sample = static_cast<int>((A_MAX/4)*a);     // Convert to a 16-bit sample
-            Waveform::advance(UI::VCA::mouse_height*880); // Advance phase, get freq from mouse distance to center
+            sample = 0;                                 // reset sample
+            for(int i=0; i<Voices::count; i++)
+            {
+                // Get waveform value for this voice
+                a = Waveform::sawtooth(Voices::phase[i]);
+                // Base amplitude and frequency on harmonic
+                int harmonic = i+1;                     // harmonic : simple int multiple
+                // Convert to a 16-bit sample and add to this sample
+                if(1) sample += static_cast<int>(A_MAX*a);
+                if(0) sample += static_cast<int>((A_MAX*a)/Voices::count);
+                // Advance phase, get freq from mouse distance to center and harmonic
+                // freq is set by mouse height, max freq is 220*harmonic
+                Waveform::advance(&Voices::phase[i], UI::VCA::mouse_height*220*harmonic);
+            }
         }
         if(1)
         { // Noise -- mouse vary amplitude, add noise to other sounds
             a = Waveform::noise();
-            sample += static_cast<int>(UI::VCA::mouse_center_dist*a*A_MAX);
+            sample += static_cast<int>(UI::VCA::mouse_center_dist*a*A_MAX/2);
         }
         // Little Endian (LSB at lower address)
         *wpos++ = (Uint8)(sample&0xFF);      // LSB
@@ -739,8 +759,9 @@ int main(int argc, char* argv[])
                              UI::Flags::fullscreen_toggled = true;
                              break;
                         case SDLK_SPACE:
-                             UI::Flags::mouse_xy_isfloat = !UI::Flags::mouse_xy_isfloat;
+                             UI::Flags::pressed_space = true;
                             break;
+    
                         ////////////////////////
                         // UNUSED KEYDOWN EVENTS
                         ////////////////////////
@@ -1068,6 +1089,16 @@ int main(int argc, char* argv[])
             }
             if(DEBUG) printf("AFTER: \tWindow W x H: %d x %d\tGameArt W x H: %d x %d\tGameWin W x H: %d x %d\tGtoW::scale: %d\n", wI.w, wI.h, GameArt::w, GameArt::h, GameWin::w, GameWin::h, GtoW::scale);
         }
+        if(UI::Flags::pressed_space)
+        { // Space is my go-to for things I want to play with temporarily
+            UI::Flags::pressed_space = false;
+            if (0) UI::Flags::mouse_xy_isfloat = !UI::Flags::mouse_xy_isfloat;
+            if (1)
+            { // Increment number of voices
+                Voices::count++;
+                if(Voices::count > Voices::MAX_COUNT) Voices::count = 1;
+            }
+        }
 
 
         /////////
@@ -1157,6 +1188,20 @@ int main(int argc, char* argv[])
                 int y = GameArt::h/2 - h/2;
                 SDL_Rect r{x,y,w,h};
                 SDL_RenderFillRect(ren, &r);
+            }
+            { // Show number of voices in use
+                constexpr int size = 10; int w = size; int h = size;
+                constexpr int gap = size/2;
+                int x0 = 10; int y = 10;
+                for (int i=0; i<Voices::MAX_COUNT; i++)
+                {
+                    int x = x0 + (i*(size+gap));
+                    SDL_Rect r{x,y,w,h};
+                    SDL_Color c = Colors::orange;
+                    SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a);
+                    if(Voices::count >= (i+1)) SDL_RenderFillRect(ren, &r);
+                    else                       SDL_RenderDrawRect(ren, &r);
+                }
             }
         }
 
