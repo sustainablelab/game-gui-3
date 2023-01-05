@@ -57,6 +57,8 @@ constexpr bool DEBUG_UI = true;                         // True: print unused UI
 constexpr bool DEBUG_AUDIO = true;                      // True: audio debug prints
 constexpr bool AUDIO_CALLBACK = true;                   // False : queue audio instead of callback
 constexpr int A_MAX = (1<<12) - 1;                      // Maximum volume of any single sound
+// Freq of 1st harmonic is UI::VCA::mouse_height*FREQ_H1_MAX
+constexpr float FREQ_H1_MAX = 220;                      // Maximum freq of 1st harmonic
 
 namespace Mouse
 { // Everyone wants to know about the mouse
@@ -78,6 +80,23 @@ namespace UI
         bool load_audio_from_file{false};               // Make my own audio in code!
         bool mouse_xy_isfloat{true};
         bool pressed_space{};
+        bool pressed_shift_space{};
+        bool pressed_j{};
+        bool pressed_r{};
+        // Play specific notes by warping mouse to x,y with numbers
+        bool pressed_1{};
+        bool pressed_2{};
+        bool pressed_3{};
+        bool pressed_4{};
+        bool pressed_5{};
+        bool pressed_6{};
+        bool pressed_7{};
+        bool pressed_8{};
+        bool pressed_9{};
+        bool pressed_0{};
+        bool pressed_minus{};
+        bool pressed_equals{};
+        bool pressed_backspace{};
     }
     bool is_fullscreen{};
     namespace VCA
@@ -375,7 +394,6 @@ namespace GameAudio
 }
 namespace Waveform
 {
-    float phase = 0;                                    // [0:1] : location in waveform
     ////////////
     // WAVEFORMS
     ////////////
@@ -408,6 +426,31 @@ namespace Waveform
         if(*phase >= 1) *phase -= 1;
     }
 }
+namespace Envelope
+{
+    bool enabled{};
+    float phase = 1;
+    ////////////
+    // ENVELOPES
+    ////////////
+    // Envelopes:
+    // - return a float in range 0 to 1
+    // - use phase to calculate the return value (if waveform is periodic)
+    float straight_R(float phase) { return 1-phase; } // Linear release
+    void advance(float* phase, float period)
+    {
+        if (enabled)
+        {
+            float freq = 1/period;
+            *phase += (freq / static_cast<float>(GameAudio::SAMPLE_RATE));
+            if(*phase >= 1)
+            { // Envelope is single-shot
+                *phase = 1;
+                enabled = false;
+            }
+        }
+    }
+}
 // Array of phase values for each voice
 namespace Voices
 {
@@ -438,9 +481,17 @@ void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
                 if(1) sample += static_cast<int>(A_MAX*a);
                 if(0) sample += static_cast<int>((A_MAX*a)/Voices::count);
                 // Advance phase, get freq from mouse distance to center and harmonic
-                // freq is set by mouse height, max freq is 220*harmonic
-                Waveform::advance(&Voices::phase[i], UI::VCA::mouse_height*220*harmonic);
+                // freq is set by mouse height, max freq is FREQ_H1_MAX*harmonic
+                Waveform::advance(
+                        &Voices::phase[i],
+                        UI::VCA::mouse_height*FREQ_H1_MAX*harmonic);
             }
+        }
+        if(1)
+        { // Use an envelope (retrigger with `j`)
+            a = Envelope::straight_R(Envelope::phase);
+            sample = static_cast<int>(sample*a);
+            Envelope::advance(&Envelope::phase, 0.2);
         }
         if(1)
         { // Noise -- mouse vary amplitude, add noise to other sounds
@@ -474,6 +525,69 @@ struct WindowInfo
 
 SDL_Window* win;
 SDL_Renderer* ren;
+
+namespace Notes
+{ // Notes from traditional even-tempered music theory
+    // Calculate 2^(i/12) for i = 0 : 12
+
+    constexpr float _0 = 1.0;
+    constexpr float _1 = 1.0594630943592953;
+    constexpr float _2 = 1.122462048309373;
+    constexpr float _3 = 1.189207115002721;
+    constexpr float _4 = 1.2599210498948732;
+    constexpr float _5 = 1.3348398541700344;
+    constexpr float _6 = 1.4142135623730951;
+    constexpr float _7 = 1.4983070768766815;
+    constexpr float _8 = 1.5874010519681994;
+    constexpr float _9 = 1.681792830507429;
+    constexpr float _10 = 1.7817974362806785;
+    constexpr float _11 = 1.8877486253633868;
+    constexpr float _12 = 2.0;
+    constexpr float _12th_root_of_2[] = {_0,_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12};
+    void mouse_to_note(int index)
+    { // Move mouse to y = root note
+        SDL_assert(index>=0); SDL_assert(index<=12);
+        // W = (k*G) + Offset
+        // This is the y-value where I want the mouse to go
+        // 110Hz : mouse_h = 0.5 (GameArt::h * 0.5)
+        // 220Hz : mouse_h = 1.0 (GameArt::h * 0)
+        // TODO: transform from UI::VCA::mouse_height
+        //       and use UI::VCA::mouse_height instead of GameArt::h
+        //       let UI::VCA::mouse_height = 0.5 correspond to note 1
+
+        // mouse_height|note
+        // 0.5         | 1
+        // 1.0         | 2
+        // Mapping : (mouse_height-0.5)*2 + 1 = note
+        //
+        // So to go back the other way:
+        //
+        // (note - 1)/2 + 0.5 = mouse_height
+        //
+        // Notes      |note   | mouse_height
+        // Notes::_0  |1.0    | 0.5
+        // Notes::_1  |1.0595 | 0.529732
+        // ...
+        // Notes::_12 |2.0    | 1.0
+        //
+        // Get the note number using traditional music theory values from Notes
+        // (Notes::_1 Notes::_2 Notes::_3 etc)
+        /* UI::VCA::mouse_height = */
+        /*     (GameArt::h - Mouse::yf) / */
+        /*     static_cast<float>(GameArt::h); */
+        // Pick the octave:
+        /* float root = static_cast<float>(GameArt::h/8); */
+        /* float root = static_cast<float>(GameArt::h/4); */
+        float root = static_cast<float>(GameArt::h/2);
+        float game_y = GameArt::h - root*_12th_root_of_2[index];
+        // Transform that to the y-value in the actual window
+        float win_y = GtoW::scale*game_y + GtoW::Offset::y;
+        // Keep same mouse_x, just warp mouse_y
+        // Still need to transform Mouse::x from Game to Win coordinates
+        float win_x = GtoW::scale*Mouse::x + GtoW::Offset::x;
+        SDL_WarpMouseInWindow(win, win_x, win_y);
+    }
+}
 
 void shutdown(void)
 {
@@ -744,6 +858,7 @@ int main(int argc, char* argv[])
         // UI - EVENT HANDLER
         /////////////////////
 
+        SDL_Keymod kmod = SDL_GetModState();            // Check for modifier keys
         SDL_Event e; while(SDL_PollEvent(&e))
         { // Process all events, set flags for tricky ones
             switch(e.type)
@@ -756,10 +871,56 @@ int main(int argc, char* argv[])
                     { // Respond to keyboard input
                         case SDLK_q: quit=true; break;
                         case SDLK_F11:
-                             UI::Flags::fullscreen_toggled = true;
-                             break;
+                            UI::Flags::fullscreen_toggled = true;
+                            break;
                         case SDLK_SPACE:
-                             UI::Flags::pressed_space = true;
+                            if(kmod&KMOD_SHIFT) UI::Flags::pressed_shift_space = true;
+                            else                UI::Flags::pressed_space = true;
+                            break;
+                        case SDLK_j:
+                            UI::Flags::pressed_j = true;
+                            break;
+                        case SDLK_r:
+                            UI::Flags::pressed_r = true;
+                            break;
+                        case SDLK_1:
+                            UI::Flags::pressed_1 = true;
+                            break;
+                        case SDLK_2:
+                            UI::Flags::pressed_2 = true;
+                            break;
+                        case SDLK_3:
+                            UI::Flags::pressed_3 = true;
+                            break;
+                        case SDLK_4:
+                            UI::Flags::pressed_4 = true;
+                            break;
+                        case SDLK_5:
+                            UI::Flags::pressed_5 = true;
+                            break;
+                        case SDLK_6:
+                            UI::Flags::pressed_6 = true;
+                            break;
+                        case SDLK_7:
+                            UI::Flags::pressed_7 = true;
+                            break;
+                        case SDLK_8:
+                            UI::Flags::pressed_8 = true;
+                            break;
+                        case SDLK_9:
+                            UI::Flags::pressed_9 = true;
+                            break;
+                        case SDLK_0:
+                            UI::Flags::pressed_0 = true;
+                            break;
+                        case SDLK_MINUS:
+                            UI::Flags::pressed_minus = true;
+                            break;
+                        case SDLK_EQUALS:
+                            UI::Flags::pressed_equals = true;
+                            break;
+                        case SDLK_BACKSPACE:
+                            UI::Flags::pressed_backspace = true;
                             break;
     
                         ////////////////////////
@@ -968,9 +1129,9 @@ int main(int argc, char* argv[])
             }
         }
 
-        //////////
-        // PHYSICS
-        //////////
+        /////////////////
+        // PHYSICS UPDATE
+        /////////////////
         if(UI::Flags::mouse_moved)
         { // Update mouse x,y (Get GameArt coordinates)
             UI::Flags::mouse_moved = false;
@@ -1098,6 +1259,92 @@ int main(int argc, char* argv[])
                 Voices::count++;
                 if(Voices::count > Voices::MAX_COUNT) Voices::count = 1;
             }
+        }
+        if(UI::Flags::pressed_shift_space)
+        { // Decrease voice count
+            UI::Flags::pressed_shift_space = false;
+            Voices::count--;
+            if(Voices::count < 1) Voices::count = Voices::MAX_COUNT;
+        }
+        if(UI::Flags::pressed_r)
+        { // Trigger a note
+            UI::Flags::pressed_r = false;
+            Envelope::enabled = false;               // Turn off envelope
+            Envelope::phase = 0;                        // Start sound
+            if(DEBUG) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
+        }
+        if(UI::Flags::pressed_j)
+        { // Trigger a note
+            UI::Flags::pressed_j = false;
+            Envelope::enabled = true;                   // Turn on envelope
+            Envelope::phase = 0;                        // Trigger envelope
+            if(DEBUG) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
+        }
+        // Set note by warping mouse to xy
+        if(UI::Flags::pressed_1)
+        {
+            UI::Flags::pressed_1 = false;
+            Notes::mouse_to_note(0);
+        }
+        if(UI::Flags::pressed_2)
+        {
+            UI::Flags::pressed_2 = false;
+            Notes::mouse_to_note(1);
+        }
+        if(UI::Flags::pressed_3)
+        {
+            UI::Flags::pressed_3 = false;
+            Notes::mouse_to_note(2);
+        }
+        if(UI::Flags::pressed_4)
+        {
+            UI::Flags::pressed_4 = false;
+            Notes::mouse_to_note(3);
+        }
+        if(UI::Flags::pressed_5)
+        {
+            UI::Flags::pressed_5 = false;
+            Notes::mouse_to_note(4);
+        }
+        if(UI::Flags::pressed_6)
+        {
+            UI::Flags::pressed_6 = false;
+            Notes::mouse_to_note(5);
+        }
+        if(UI::Flags::pressed_7)
+        {
+            UI::Flags::pressed_7 = false;
+            Notes::mouse_to_note(6);
+        }
+        if(UI::Flags::pressed_8)
+        {
+            UI::Flags::pressed_8 = false;
+            Notes::mouse_to_note(7);
+        }
+        if(UI::Flags::pressed_9)
+        {
+            UI::Flags::pressed_9 = false;
+            Notes::mouse_to_note(8);
+        }
+        if(UI::Flags::pressed_0)
+        {
+            UI::Flags::pressed_0 = false;
+            Notes::mouse_to_note(9);
+        }
+        if(UI::Flags::pressed_minus)
+        {
+            UI::Flags::pressed_minus = false;
+            Notes::mouse_to_note(10);
+        }
+        if(UI::Flags::pressed_equals)
+        {
+            UI::Flags::pressed_equals = false;
+            Notes::mouse_to_note(11);
+        }
+        if(UI::Flags::pressed_backspace)
+        {
+            UI::Flags::pressed_backspace = false;
+            Notes::mouse_to_note(12);
         }
 
 
