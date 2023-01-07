@@ -666,7 +666,7 @@ int main(int argc, char* argv[])
             }
             // TODO: load font
             const char* path = "ProggyClean.ttf";       // font path
-            constexpr int size = 16;                    // font point size
+            constexpr int size = 36;                    // font point size
             ttf = TTF_OpenFont(path,size);
             if(ttf == NULL)
             { // Cannot open this font
@@ -1537,6 +1537,24 @@ int main(int argc, char* argv[])
                 SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a>>3); // 12% lighten
                 SDL_Rect rect = {.x=0, .y=0, .w=wI.w, .h=OVERLAY_H};
                 SDL_RenderFillRect(ren, &rect);             // Draw filled rect
+            }
+            { // Render text
+                const char* msg = "A super long message to test that the text is wrapping "
+                                  "correctly. So I have to put a lot of info here. Why does the font point "
+                                  "size need to be set to 36? Should be like 16. "
+                                  "Something is weird.";
+                constexpr int margin = 10;
+                SDL_Rect textbox = {.x=margin, .y=margin, .w=0, .h=0};
+                SDL_Surface* surf = TTF_RenderText_Blended_Wrapped(ttf,
+                        msg,                          // text
+                        Colors::snow,                   // color
+                        wI.w - 2*margin                 // text width : wrap here
+                        );
+                SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+                SDL_FreeSurface(surf);
+                SDL_QueryTexture(tex, NULL, NULL, &textbox.w, &textbox.h);
+                SDL_RenderCopy(ren, tex, NULL, &textbox);
+                SDL_DestroyTexture(tex);
             }
         }
         SDL_RenderPresent(ren);
