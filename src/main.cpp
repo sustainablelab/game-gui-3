@@ -70,6 +70,8 @@ namespace Mouse
 }
 namespace UI
 { // If UI event code does too much, move code out and make it a flag
+
+    bool show_overlay{true};
     namespace Flags
     {
         bool window_size_changed{true};
@@ -551,9 +553,8 @@ namespace Notes
         // This is the y-value where I want the mouse to go
         // 110Hz : mouse_h = 0.5 (GameArt::h * 0.5)
         // 220Hz : mouse_h = 1.0 (GameArt::h * 0)
-        // TODO: transform from UI::VCA::mouse_height
-        //       and use UI::VCA::mouse_height instead of GameArt::h
-        //       let UI::VCA::mouse_height = 0.5 correspond to note 1
+
+        // TODO: pick the octave to operate in using the arrow keys
 
         // mouse_height|note
         // 0.5         | 1
@@ -608,7 +609,7 @@ int main(int argc, char* argv[])
             wI.y = 60;
             SDL_assert(GameArt::pixel_size >= 1);       // 1 : high-def, >1 : chunky
             wI.w = GameWin::w;
-            wI.h = GameWin::h;
+            wI.h = GameWin::h + 200;                    // 200 : room for overlay
             wI.flags = SDL_WINDOW_RESIZABLE;
         };
         { // Use the window x,y,w,h passed by Vim
@@ -872,6 +873,9 @@ int main(int argc, char* argv[])
                         case SDLK_q: quit=true; break;
                         case SDLK_F11:
                             UI::Flags::fullscreen_toggled = true;
+                            break;
+                        case SDLK_SLASH:
+                            if(kmod&KMOD_SHIFT) UI::show_overlay = !UI::show_overlay;
                             break;
                         case SDLK_SPACE:
                             if(kmod&KMOD_SHIFT) UI::Flags::pressed_shift_space = true;
@@ -1378,9 +1382,9 @@ int main(int argc, char* argv[])
         // RENDER
         /////////
 
-        /////////////
-        // GAME SOUND
-        /////////////
+        ////////////////////
+        // RENDER GAME SOUND (Not used : only runs if NOT using callback)
+        ////////////////////
 
         if(!AUDIO_CALLBACK)
         { // Check if it's time to queue more audio
@@ -1424,9 +1428,9 @@ int main(int argc, char* argv[])
 
         }
 
-        ///////////
-        // GAME ART
-        ///////////
+        //////////////////
+        // RENDER GAME ART
+        //////////////////
         SDL_SetRenderTarget(ren, GameArt::tex);
 
         { // Game art background color
@@ -1478,6 +1482,9 @@ int main(int argc, char* argv[])
             }
         }
 
+        ///////////////////
+        // RENDER OS WINDOW
+        ///////////////////
         SDL_SetRenderTarget(ren, NULL);
         { // Set background color of window to match my Vim background color
             SDL_Color c = Colors::blackestgravel;
@@ -1494,6 +1501,22 @@ int main(int argc, char* argv[])
             if(SDL_RenderCopy(ren, GameArt::tex, &src, &dst))
             {
                 if(DEBUG) printf("%d : SDL error msg: %s\n",__LINE__,SDL_GetError());
+            }
+        }
+        if(UI::show_overlay)
+        { // Show debug/help overlay
+            constexpr int OVERLAY_H = 100;
+            { // Darken light stuff
+                SDL_Color c = Colors::coal;
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a>>1); // 50% darken
+                SDL_Rect rect = {.x=0, .y=0, .w=wI.w, .h=OVERLAY_H};
+                SDL_RenderFillRect(ren, &rect);             // Draw filled rect
+            }
+            { // Lighten dark stuff
+                SDL_Color c = Colors::snow;
+                SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, c.a>>3); // 12% lighten
+                SDL_Rect rect = {.x=0, .y=0, .w=wI.w, .h=OVERLAY_H};
+                SDL_RenderFillRect(ren, &rect);             // Draw filled rect
             }
         }
         SDL_RenderPresent(ren);
