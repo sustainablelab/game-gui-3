@@ -577,8 +577,8 @@ namespace Notes
         /*     static_cast<float>(GameArt::h); */
         // Pick the octave:
         /* float root = static_cast<float>(GameArt::h/8); */
-        /* float root = static_cast<float>(GameArt::h/4); */
-        float root = static_cast<float>(GameArt::h/2);
+        float root = static_cast<float>(GameArt::h/4);
+        /* float root = static_cast<float>(GameArt::h/2); */
         float game_y = GameArt::h - root*_12th_root_of_2[index];
         // Transform that to the y-value in the actual window
         float win_y = GtoW::scale*game_y + GtoW::Offset::y;
@@ -1135,11 +1135,21 @@ int main(int argc, char* argv[])
         if(UI::Flags::mouse_moved)
         { // Update mouse x,y (Get GameArt coordinates)
             UI::Flags::mouse_moved = false;
+            // Get floats for pitch
             Mouse::xf = (Mouse::motion.x - GtoW::Offset::x)/static_cast<float>(GtoW::scale);
             Mouse::yf = (Mouse::motion.y - GtoW::Offset::y)/static_cast<float>(GtoW::scale);
-            // TODO: need to use floats for this? Doesn't seem like it.
+            // Get ints too
             Mouse::x = (Mouse::motion.x - GtoW::Offset::x)/GtoW::scale;
             Mouse::y = (Mouse::motion.y - GtoW::Offset::y)/GtoW::scale;
+            // Clamp mouse x, y to game window:
+            if(Mouse::y < 0) Mouse::y = 0;
+            if(Mouse::x < 0) Mouse::x = 0;
+            if(Mouse::yf < 0) Mouse::yf = 0;
+            if(Mouse::xf < 0) Mouse::xf = 0;
+            if(Mouse::y > GameArt::h) Mouse::y = GameArt::h;
+            if(Mouse::x > GameArt::w) Mouse::x = GameArt::w;
+            if(Mouse::yf > GameArt::h) Mouse::yf = (float)GameArt::h;
+            if(Mouse::xf > GameArt::w) Mouse::xf = (float)GameArt::w;
             if(DEBUG_UI)
             {
                 if(UI::Flags::mouse_xy_isfloat)
@@ -1346,7 +1356,23 @@ int main(int argc, char* argv[])
             UI::Flags::pressed_backspace = false;
             Notes::mouse_to_note(12);
         }
-
+        // TODO: warp mouse when I press a pitch key, EVEN IF THE MOUSE IS MOVING!
+        // I tried this, but it seems to make no difference.
+        // I think I need to filter the pitch keys instead of polling them.
+        if( UI::Flags::pressed_1 ||
+            UI::Flags::pressed_2 ||
+            UI::Flags::pressed_3 ||
+            UI::Flags::pressed_4 ||
+            UI::Flags::pressed_5 ||
+            UI::Flags::pressed_6 ||
+            UI::Flags::pressed_7 ||
+            UI::Flags::pressed_8 ||
+            UI::Flags::pressed_9 ||
+            UI::Flags::pressed_0 ||
+            UI::Flags::pressed_minus ||
+            UI::Flags::pressed_equals ||
+            UI::Flags::pressed_backspace
+            ) UI::Flags::mouse_moved = true;
 
         /////////
         // RENDER
