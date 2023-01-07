@@ -10,7 +10,7 @@ CXXFLAGS_TTF := `pkg-config --cflags SDL2_ttf`
 CXXFLAGS := $(CXXFLAGS_BASE) $(CXXFLAGS_INC) $(CXXFLAGS_SDL) $(CXXFLAGS_TTF)
 LDLIBS_SDL := `pkg-config --libs sdl2`
 LDLIBS_TTF := `pkg-config --libs SDL2_ttf`
-LDLIBS := $(LDLIBS_SDL) $(LIDLIBS_TTF)
+LDLIBS := $(LDLIBS_SDL) $(LDLIBS_TTF)
 
 default-target: $(EXE)
 

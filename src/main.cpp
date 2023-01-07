@@ -528,6 +528,7 @@ struct WindowInfo
 
 SDL_Window* win;
 SDL_Renderer* ren;
+TTF_Font* ttf;
 
 namespace Notes
 { // Notes from traditional even-tempered music theory
@@ -593,6 +594,8 @@ namespace Notes
 
 void shutdown(void)
 {
+    TTF_CloseFont(ttf);
+    TTF_Quit();
     SDL_FreeWAV(GameAudio::Sound::buf);
     SDL_CloseAudioDevice(GameAudio::dev);
     SDL_DestroyTexture(GameArt::tex);
@@ -654,6 +657,10 @@ int main(int argc, char* argv[])
             // blend mode is?
             printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
             shutdown(); return EXIT_FAILURE;
+        }
+        { // Set up font
+            TTF_Init();
+            // TODO: load font
         }
 
         /////////////
