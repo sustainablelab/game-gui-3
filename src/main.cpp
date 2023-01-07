@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include "SDL.h"
+#include "SDL_ttf.h"
 #include "mg_colors.h"
 
 /* *************Audio Tasks***************

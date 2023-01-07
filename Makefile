@@ -6,8 +6,11 @@ INC := game-libs
 CXXFLAGS_BASE := -std=c++20 -Wall -Wextra -Wpedantic
 CXXFLAGS_INC := -I$(INC)
 CXXFLAGS_SDL := `pkg-config --cflags sdl2`
-CXXFLAGS := $(CXXFLAGS_BASE) $(CXXFLAGS_INC) $(CXXFLAGS_SDL)
-LDLIBS := `pkg-config --libs sdl2`
+CXXFLAGS_TTF := `pkg-config --cflags SDL2_ttf`
+CXXFLAGS := $(CXXFLAGS_BASE) $(CXXFLAGS_INC) $(CXXFLAGS_SDL) $(CXXFLAGS_TTF)
+LDLIBS_SDL := `pkg-config --libs sdl2`
+LDLIBS_TTF := `pkg-config --libs SDL2_ttf`
+LDLIBS := $(LDLIBS_SDL) $(LIDLIBS_TTF)
 
 default-target: $(EXE)
 
