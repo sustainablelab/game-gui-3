@@ -659,8 +659,20 @@ int main(int argc, char* argv[])
             shutdown(); return EXIT_FAILURE;
         }
         { // Set up font
-            TTF_Init();
+            if( TTF_Init() <0 )
+            { // Cannot use fonts, quit
+                printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
+                shutdown(); return EXIT_FAILURE;
+            }
             // TODO: load font
+            const char* path = "ProggyClean.ttf";       // font path
+            constexpr int size = 16;                    // font point size
+            ttf = TTF_OpenFont(path,size);
+            if(ttf == NULL)
+            { // Cannot open this font
+                printf("line %d : SDL error msg: \"%s\" ",__LINE__, SDL_GetError());
+                shutdown(); return EXIT_FAILURE;
+            }
         }
 
         /////////////
