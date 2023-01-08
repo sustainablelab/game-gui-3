@@ -1305,14 +1305,14 @@ int main(int argc, char* argv[])
             UI::Flags::pressed_r = false;
             Envelope::enabled = false;               // Turn off envelope
             Envelope::phase = 0;                        // Start sound
-            if(DEBUG) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
+            if(0) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
         }
         if(UI::Flags::pressed_j)
         { // Trigger a note
             UI::Flags::pressed_j = false;
             Envelope::enabled = true;                   // Turn on envelope
             Envelope::phase = 0;                        // Trigger envelope
-            if(DEBUG) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
+            if(0) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
         }
         // Set note by warping mouse to xy
         if(UI::Flags::pressed_1)
@@ -1539,14 +1539,74 @@ int main(int argc, char* argv[])
                 SDL_RenderFillRect(ren, &rect);             // Draw filled rect
             }
             { // Render text
-                const char* msg = "A super long message to test that the text is wrapping "
-                                  "correctly. So I have to put a lot of info here. Why does the font point "
-                                  "size need to be set to 36? Should be like 16. "
-                                  "Something is weird.";
+                char text[1024];
+                switch(Voices::count)
+                {
+                    case 1:
+                        sprintf(text, "FREQ: %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX);
+                        break;
+                    case 2:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2);
+                        break;
+                    case 3:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3);
+                        break;
+                    case 4:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*4);
+                        break;
+                    case 5:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*4,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*5);
+                        break;
+                    case 6:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*4,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*5,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*6);
+                        break;
+                    case 7:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*4,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*5,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*6,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*7);
+                        break;
+                    default:
+                        sprintf(text, "FREQ: %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz %0.3fHz\n",
+                            UI::VCA::mouse_height*FREQ_H1_MAX,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*2,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*3,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*4,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*5,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*6,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*7,
+                            UI::VCA::mouse_height*FREQ_H1_MAX*8);
+                        break;
+                }
                 constexpr int margin = 10;
                 SDL_Rect textbox = {.x=margin, .y=margin, .w=0, .h=0};
                 SDL_Surface* surf = TTF_RenderText_Blended_Wrapped(ttf,
-                        msg,                          // text
+                        text,                          // text
                         Colors::snow,                   // color
                         wI.w - 2*margin                 // text width : wrap here
                         );
