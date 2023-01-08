@@ -17,6 +17,10 @@
        step. On wraparound (phase >= 1), do not reset to zero! Instead, subtract one from
        phase.
    [ ] Describe waveform with a curve (do a triangle wave to replace sawtooth)
+   [ ] Support more than one periodic waveform.
+       I need a separate Voices::phase[] for each periodic Waveform I want to set up.
+       Since Voices::phase[] is a single global, I can only have one of these.
+       Set myself up for more than one Voices::phase[].
    [ ] Use SDL_AudioStream
     - I'm doing stuff myself at the byte level for now
     - life will probably be much simpler if I use SDL_AudioStream
@@ -395,6 +399,12 @@ namespace GameAudio
         }
     }
 }
+namespace Voices
+{ // Track phase value for each voice in the periodic waveform
+    constexpr int MAX_COUNT = 8;
+    int count = 1;
+    float phase[MAX_COUNT]{};                               // [0:1] : location in waveform
+}
 namespace Waveform
 {
     ////////////
@@ -454,13 +464,6 @@ namespace Envelope
         }
     }
 }
-// Array of phase values for each voice
-namespace Voices
-{
-    constexpr int MAX_COUNT = 8;
-    int count = 1;
-    float phase[MAX_COUNT]{};                               // [0:1] : location in waveform
-}
 void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
 { // Write `NUM_SAMPLES` to position `wpos` in audio tape
     // TODO: Move sound generation and amplitude stuff out to a different
@@ -468,21 +471,24 @@ void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
     //       just write samples to tape -- so it will read values from somewhere, it won't
     //       generate any samples.
     //       The noise generation and amplitude scaling here is just a placeholder.
-    int sample; float a;                                // Amplitude
+    int sample;                                         // Amplitude of final mix
+    int sample_ch1;                                     // Channel 1 amplitude
+    int sample_ch2;                                     // Channel 2 amplitude
     for(Uint32 i=0; i<NUM_SAMPLES; i++)
     {
-        if(1) // Play all Voices as a single mix of sawtooth harmonics
+        if(1) // Waveform channel : Play all Voices as a single mix of sawtooth harmonics
         { // Parametric waveform -- use mouse to vary pitch, not amplitude
-            sample = 0;                                 // reset sample
+            sample_ch1 = 0;                             // Reset next sample to 0
             for(int i=0; i<Voices::count; i++)
-            {
+            { // Add the sample for each voice (harmonic)
                 // Get waveform value for this voice
-                a = Waveform::sawtooth(Voices::phase[i]);
-                // Base amplitude and frequency on harmonic
+                float a = Waveform::sawtooth(Voices::phase[i]);
+                // Amplitude and frequency depend on which harmonic this is
                 int harmonic = i+1;                     // harmonic : simple int multiple
                 // Convert to a 16-bit sample and add to this sample
-                if(1) sample += static_cast<int>(A_MAX*a);
-                if(0) sample += static_cast<int>((A_MAX*a)/Voices::count);
+                constexpr bool ATTENUATE = false;       // False : same amplitude for all
+                if(ATTENUATE) sample_ch1 += static_cast<int>((A_MAX*a)/Voices::count);
+                else          sample_ch1 += static_cast<int>(A_MAX*a);
                 // Advance phase, get freq from mouse distance to center and harmonic
                 // freq is set by mouse height, max freq is FREQ_H1_MAX*harmonic
                 Waveform::advance(
@@ -490,16 +496,21 @@ void write_tape(Uint8* wpos, Uint32 NUM_SAMPLES)
                         UI::VCA::mouse_height*FREQ_H1_MAX*harmonic);
             }
         }
-        if(1)
+        if(1) // Noise channel
+        { // Noise -- mouse vary amplitude, add noise to other sounds
+            float a = Waveform::noise();
+            sample_ch2 = static_cast<int>(UI::VCA::mouse_center_dist*a*A_MAX/2);
+        }
+        if(1) // Apply Envelope
         { // Use an envelope (retrigger with `j`)
-            a = Envelope::straight_R(Envelope::phase);
-            sample = static_cast<int>(sample*a);
+            float a = Envelope::straight_R(Envelope::phase);
+            sample_ch1 = static_cast<int>(sample_ch1*a);
+            sample_ch2 = static_cast<int>(sample_ch2*a);
             Envelope::advance(&Envelope::phase, 0.2);
         }
-        if(1)
-        { // Noise -- mouse vary amplitude, add noise to other sounds
-            a = Waveform::noise();
-            sample += static_cast<int>(UI::VCA::mouse_center_dist*a*A_MAX/2);
+        if(1) // Mix
+        { // Mix the channels
+            sample = sample_ch1 + sample_ch2;
         }
         // Little Endian (LSB at lower address)
         *wpos++ = (Uint8)(sample&0xFF);      // LSB
