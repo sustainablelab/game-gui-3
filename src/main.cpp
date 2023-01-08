@@ -90,6 +90,7 @@ namespace UI
         bool pressed_shift_space{};
         bool pressed_j{};
         bool pressed_r{};
+        bool pressed_R{};
         // Play specific notes by warping mouse to x,y with numbers
         bool pressed_1{};
         bool pressed_2{};
@@ -443,6 +444,7 @@ namespace Envelope
 {
     bool enabled{};
     float phase = 1;
+    bool one_shot{true};
     ////////////
     // ENVELOPES
     ////////////
@@ -457,9 +459,17 @@ namespace Envelope
             float freq = 1/period;
             *phase += (freq / static_cast<float>(GameAudio::SAMPLE_RATE));
             if(*phase >= 1)
-            { // Envelope is single-shot
-                *phase = 1;
-                enabled = false;
+            {
+                if(one_shot)
+                { // Envelope is single-shot
+                    *phase = 1;
+                    enabled = false;
+                }
+                else
+                { // Envelope loops
+                    *phase = 0;
+                    enabled = true;
+                }
             }
         }
     }
@@ -916,7 +926,8 @@ int main(int argc, char* argv[])
                             UI::Flags::pressed_j = true;
                             break;
                         case SDLK_r:
-                            UI::Flags::pressed_r = true;
+                            if(kmod&KMOD_SHIFT) UI::Flags::pressed_R = true;
+                            else                UI::Flags::pressed_r = true;
                             break;
                         case SDLK_1:
                             UI::Flags::pressed_1 = true;
@@ -1312,18 +1323,24 @@ int main(int argc, char* argv[])
             if(Voices::count < 1) Voices::count = Voices::MAX_COUNT;
         }
         if(UI::Flags::pressed_r)
-        { // Trigger a note
+        { // Trigger a note with no envelope (reset envelope)
             UI::Flags::pressed_r = false;
-            Envelope::enabled = false;               // Turn off envelope
+            Envelope::enabled = false;                  // Turn off envelope
             Envelope::phase = 0;                        // Start sound
-            if(0) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
         }
         if(UI::Flags::pressed_j)
-        { // Trigger a note
+        { // Trigger a note with one-shot envelope
             UI::Flags::pressed_j = false;
             Envelope::enabled = true;                   // Turn on envelope
+            Envelope::one_shot = true;
             Envelope::phase = 0;                        // Trigger envelope
-            if(0) printf("freq 1st-harmonic: %0.3fHz\n",UI::VCA::mouse_height*FREQ_H1_MAX);
+        }
+        if(UI::Flags::pressed_R)
+        { // Trigger a note with periodic envelope (repeat envelope)
+            UI::Flags::pressed_R = false;
+            Envelope::enabled = true;                   // Turn on envelope
+            Envelope::one_shot = false;
+            Envelope::phase = 0;                        // Start sound
         }
         // Set note by warping mouse to xy
         if(UI::Flags::pressed_1)
