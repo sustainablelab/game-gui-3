@@ -14,7 +14,10 @@ LDLIBS := $(LDLIBS_SDL) $(LDLIBS_TTF)
 
 default-target: $(EXE)
 
-$(EXE): $(SRC)
+build:
+	@mkdir -p build
+
+$(EXE): $(SRC) | build
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 .PHONY: $(HEADER_LIST)
