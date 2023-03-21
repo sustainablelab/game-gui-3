@@ -1,6 +1,5 @@
 SRC := src/main.cpp
 EXE := build/$(basename $(notdir $(SRC)))
-HEADER_LIST := build/$(basename $(notdir $(SRC))).d
 INC := game-libs
 
 CXXFLAGS_BASE := -std=c++20 -Wall -Wextra -Wpedantic
@@ -20,18 +19,24 @@ build:
 $(EXE): $(SRC) | build
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+HEADER_LIST := build/$(basename $(notdir $(SRC))).d
+what-HEADER_LIST: ; @echo $(HEADER_LIST)
+
 .PHONY: $(HEADER_LIST)
 $(HEADER_LIST): $(SRC)
 	$(CXX) $(CXXFLAGS) -M $^ -MF $@
 
-build/ctags-dlist: ctags-dlist.cpp
+build-tags:
+	@mkdir -p build-tags
+
+build-tags/ctags-dlist: src/ctags-dlist.cpp | build-tags
 	$(CXX) $(CXXFLAGS_BASE) $^ -o $@
 
 .PHONY: tags
-tags: $(HEADER_LIST) build/ctags-dlist
-	build/ctags-dlist $(HEADER_LIST)
-	ctags --c-kinds=+p+x -L headers.txt
-	ctags --c-kinds=+p+x+l -a $(SRC)
+tags: $(HEADER_LIST) build-tags/ctags-dlist
+	build-tags/ctags-dlist $(HEADER_LIST)
+	ctags --c-kinds=+p+x --extra=+q -L build-tags/headers.txt
+	ctags --c-kinds=+p+x+l --extra=+q -a $(SRC)
 
 .PHONY: what
 what:

@@ -26,7 +26,7 @@ int main(int argc, char* argv[])
     }
 
     // Open output file
-    FILE *fo = fopen("headers.txt", "w");
+    FILE *fo = fopen("build-tags/headers.txt", "w");
     if (  fo==NULL  )
     {
         perror("Cannot open output file headers.txt");
