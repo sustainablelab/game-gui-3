@@ -45,6 +45,32 @@ namespace Colors
     constexpr SDL_Color coffee         = {0xc7,0x91,0x5b,0xff};
     constexpr SDL_Color darkroast      = {0x88,0x63,0x3f,0xff};
 
+    const char* name[] = 
+    {
+            "coal",
+            "blackestgravel",
+            "blackgravel",
+            "darkgravel",
+            "deepergravel",
+            "deepgravel",
+            "gravel",
+            "mediumgravel",
+            "lightgravel",
+            "brightgravel",
+            "plain",
+            "snow",
+            "toffee",
+            "coffee",
+            "darkroast",
+            "dalespale",
+            "dirtyblonde",
+            "lime",
+            "taffy",
+            "saltwatertaffy",
+            "tardis",
+            "orange",
+            "dress",
+    };
     constexpr SDL_Color list[] =
         {
             coal,
