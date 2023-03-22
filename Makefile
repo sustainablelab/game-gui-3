@@ -1,9 +1,17 @@
+#############
+# APPLICATION
+#############
 SRC := src/main.cpp
 EXE := build/$(basename $(notdir $(SRC)))
-INC := game-libs
+
+default-target: $(EXE)
+
+INC := game-libs mg_test
+what-INC: ; @echo $(INC)
 
 CXXFLAGS_BASE := -std=c++20 -Wall -Wextra -Wpedantic
-CXXFLAGS_INC := -I$(INC)
+CXXFLAGS_INC := $(foreach DIR, $(INC), -I$(DIR))
+what-Idir: ; @echo $(CXXFLAGS_INC)
 CXXFLAGS_SDL := `pkg-config --cflags sdl2`
 CXXFLAGS_TTF := `pkg-config --cflags SDL2_ttf`
 CXXFLAGS := $(CXXFLAGS_BASE) $(CXXFLAGS_INC) $(CXXFLAGS_SDL) $(CXXFLAGS_TTF)
@@ -11,7 +19,21 @@ LDLIBS_SDL := `pkg-config --libs sdl2`
 LDLIBS_TTF := `pkg-config --libs SDL2_ttf`
 LDLIBS := $(LDLIBS_SDL) $(LDLIBS_TTF)
 
-default-target: $(EXE)
+############
+# UNIT TESTS
+############
+RUN_TESTS := build-tests/run-tests
+TESTS := src/tests.cpp
+
+test: $(RUN_TESTS)
+
+build-tests:
+	mkdir -p build-tests
+
+.PHONY: $(RUN_TESTS)
+$(RUN_TESTS): $(TESTS) | build-tests
+	@$(CXX) $(CXXFLAGS) $< -o $@
+	$(RUN_TESTS)
 
 build:
 	@mkdir -p build
@@ -61,5 +83,5 @@ how:
 	@echo "Run          ;r<Space>       :!./build/main"
 	@echo "Run in Vim   ;w<Space>       :!./build/main <args> &"
 	@echo "Make tags    ;t<Space>       :make tags"
-
+	@echo "Run tests                    :make test"
 
